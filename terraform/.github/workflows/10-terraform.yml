@@ -1,0 +1,84 @@
+# Workflow for all Terraform operations: planning on feature branches
+# and applying only on the 'main' branch push. This enforces code review
+# before deployment, a core CI/CD best practice.
+name: 10 - Terraform (plan on branches, apply on main)
+
+# ## Triggers
+# Run the workflow on every push or pull request to any branch.
+on:
+    push:
+        branches: ["**"] # Triggers on push to any branch
+    pull_request:
+        branches: ["**"] # Triggers on PR creation/update to any branch
+
+# ## Permissions
+permissions:
+    id-token: write # Critical: Needed to retrieve the OIDC token for assuming the IAM role.
+    contents: read # Required to check out the repository code.
+
+# ## Concurrency Control
+# Ensures that only one workflow runs per branch at a time.
+# If a new commit is pushed, the previous workflow for that branch is cancelled.
+# This prevents race conditions and ensures the latest code is always deployed.
+concurrency:
+    group: terraform-${{ github.ref_name }} # Groups runs by branch name (e.g., 'terraform-main', 'terraform-feature-x')
+    cancel-in-progress: true
+
+# ## Job Definition
+jobs:
+    tf:
+        runs-on: ubuntu-latest
+
+        # ## Steps
+        steps:
+            - uses: actions/checkout@v4
+              name: Check out repository code
+
+            - name: Setup Terraform
+              uses: hashicorp/setup-terraform@v3
+              # Consider adding a specific 'terraform_version' here for reproducibility.
+
+            - name: Configure AWS credentials (OIDC)
+              uses: aws-actions/configure-aws-credentials@v4
+              # Assumes the powerful IAM role created during the bootstrap phase.
+              # This replaces the need for static access keys (a huge security win!).
+              with:
+                  role-to-assume: ${{ vars.AWS_ROLE_ARN }} # ARN of the role to assume, sourced from a repo variable.
+                  aws-region: ${{ vars.AWS_REGION }} # Target AWS region, sourced from a repo variable.
+                  role-session-name: gha-tf-${{ github.run_id }} # Unique session name for CloudTrail traceability.
+
+            - name: Terraform Init (uses backend-config from repo Variables)
+              # Initializes Terraform, dynamically injecting the remote S3/DynamoDB
+              # backend configuration using variables set during the bootstrap.
+              run: |
+                  terraform init -input=false \
+                    -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+                    -backend-config="key=${{ vars.TF_STATE_KEY }}" \
+                    -backend-config="region=${{ vars.AWS_REGION }}" \
+                    -backend-config="dynamodb_table=${{ vars.TF_STATE_TABLE }}" \
+                    -backend-config="encrypt=true"
+
+            - name: Terraform Validate & Plan
+              # Run formatting checks, structural validation, and generate the execution plan.
+              run: |
+                  terraform fmt -check
+                  terraform validate
+                  # The plan output is saved to a binary file (tfplan.bin) for secure, immutable deployment later.
+                  terraform plan -input=false -no-color -out=tfplan.bin
+
+            - name: Upload plan artifact (for PRs/review)
+              # For non-main branches (i.e., feature branches and PRs), upload the plan file.
+              # This allows reviewers to download and inspect the exact changes before merging.
+              if: github.ref != 'refs/heads/main'
+              uses: actions/upload-artifact@v4
+              with:
+                  name: tfplan
+                  path: tfplan.bin
+
+            - name: Terraform Apply (only on main)
+              # The ultimate deployment step. This is **gated** to run ONLY under two conditions:
+              # 1. The workflow is running on the 'main' branch (`github.ref == 'refs/heads/main'`).
+              # 2. The event was a code push (`github.event_name == 'push'`), preventing PR merges from auto-applying.
+              if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+              # Applies the previously generated, validated plan (`tfplan.bin`).
+              run: terraform apply -input=false -auto-approve tfplan.bin

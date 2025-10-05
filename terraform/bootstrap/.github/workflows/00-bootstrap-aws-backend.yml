@@ -1,0 +1,93 @@
+# The primary workflow for setting up the secure remote backend
+# and CI/CD trust relationships in AWS. This is the crucial
+# first step before deploying any other infrastructure.
+name: 00 - Bootstrap AWS Backend
+
+# This workflow is designed to be triggered manually.
+# The `workflow_dispatch` trigger requires explicit input
+# from the user, making it ideal for a sensitive, one-time bootstrap process.
+on:
+    workflow_dispatch:
+        inputs:
+            bucket_name:
+                description: "Globally-unique S3 bucket for Terraform state (e.g., my-project-tf-state-123)"
+                required: true
+            dynamodb_table_name:
+                description: "DynamoDB table for state locking (e.g., tf-locks-my-project)"
+                required: true
+            tf_state_key:
+                description: "State key path (e.g., infra/terraform.tfstate) - used by future deployments"
+                required: true
+            github_owner:
+                description: "GitHub owner/org (e.g., my-company)"
+                required: true
+            github_repo:
+                description: "GitHub repo name (no owner, e.g., aws-infra)"
+                required: true
+            project_name:
+                description: "Project short name (used for tagging and naming resources like IAM roles)"
+                required: true
+                default: "web-apps"
+
+permissions:
+    # Read access is needed for checkout.
+    contents: read
+    # Write access is needed to set GitHub repository variables (e.g., AWS_ROLE_ARN).
+    actions: write
+
+jobs:
+    bootstrap:
+        # Run on a standard runner environment.
+        runs-on: ubuntu-latest
+        env:
+            # Map required inputs and secrets/vars to TF_VAR environment variables.
+            # Terraform will automatically consume these for the `bootstrap` module.
+            # TF_VAR_aws_region is sourced from a repository variable (vars.AWS_REGION).
+            TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+            TF_VAR_project_name: ${{ inputs.project_name }}
+            TF_VAR_bucket_name: ${{ inputs.bucket_name }}
+            TF_VAR_dynamodb_table_name: ${{ inputs.dynamodb_table_name }}
+            TF_VAR_tf_state_key: ${{ inputs.tf_state_key }}
+            TF_VAR_github_owner: ${{ inputs.github_owner }}
+            TF_VAR_github_repo: ${{ inputs.github_repo }}
+            # Pass a token for the GitHub provider to create the repo variables.
+            TF_VAR_github_token: ${{ secrets.GH_ADMIN_TOKEN }}
+
+        steps:
+            - uses: actions/checkout@v4
+              name: Check out repository code (required for accessing bootstrap directory)
+
+            - name: Setup Terraform
+              uses: hashicorp/setup-terraform@v3
+              with:
+                  # Ensure a specific version is used for consistency.
+                  terraform_version: 1.6.0 # Recommend setting a specific version here!
+
+            # Use temporary access keys ONLY for this one-time bootstrap
+            # IMPORTANT: These bootstrap keys (secrets) should be deleted from
+            # the GitHub secrets store immediately after the first successful run.
+            # Future runs will use the OIDC-assumed IAM role created here.
+            - name: Configure AWS credentials (temporary bootstrap keys)
+              uses: aws-actions/configure-aws-credentials@v4
+              with:
+                  aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+                  aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+                  aws-region: ${{ vars.AWS_REGION }}
+
+            - name: Terraform Init (bootstrap)
+              working-directory: ./bootstrap
+              # Initialize Terraform for the *local* backend. The remote backend (S3/DDB)
+              # is defined in the code and will be created on apply.
+              run: terraform init -input=false
+
+            - name: Terraform Apply (bootstrap)
+              working-directory: ./bootstrap
+              # Apply changes to create the S3 bucket, DynamoDB table, IAM OIDC provider,
+              # and the IAM Role for future CI/CD deployments.
+              run: terraform apply -auto-approve -input=false
+
+            - name: Show outputs
+              working-directory: ./bootstrap
+              # Display critical outputs like the AWS_ROLE_ARN and backend names
+              # to confirm successful resource creation.
+              run: terraform output
