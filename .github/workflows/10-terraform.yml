@@ -1,84 +1,92 @@
-# Workflow for all Terraform operations: planning on feature branches
-# and applying only on the 'main' branch push. This enforces code review
-# before deployment, a core CI/CD best practice.
+###############################################################
+# 10 - Terraform (plan on branches, apply on main)
+# Purpose:
+#  - Use GitHub OIDC to assume AWS role (no static keys).
+#  - Plan on branches/PRs; Apply only on main.
+#  - Protect apply with GitHub Environment "production" (set reviewers).
+###############################################################
 name: 10 - Terraform (plan on branches, apply on main)
 
-# ## Triggers
-# Run the workflow on every push or pull request to any branch.
 on:
-    push:
-        branches: ["**"] # Triggers on push to any branch
-    pull_request:
-        branches: ["**"] # Triggers on PR creation/update to any branch
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
 
-# ## Permissions
 permissions:
-    id-token: write # Critical: Needed to retrieve the OIDC token for assuming the IAM role.
-    contents: read # Required to check out the repository code.
+  id-token: write
+  contents: read
 
-# ## Concurrency Control
-# Ensures that only one workflow runs per branch at a time.
-# If a new commit is pushed, the previous workflow for that branch is cancelled.
-# This prevents race conditions and ensures the latest code is always deployed.
 concurrency:
-    group: terraform-${{ github.ref_name }} # Groups runs by branch name (e.g., 'terraform-main', 'terraform-feature-x')
-    cancel-in-progress: true
+  group: terraform-${{ github.ref_name }}
+  cancel-in-progress: true
 
-# ## Job Definition
 jobs:
-    tf:
-        runs-on: ubuntu-latest
+  tf:
+    runs-on: ubuntu-latest
 
-        # ## Steps
-        steps:
-            - uses: actions/checkout@v4
-              name: Check out repository code
+    # Apply is gated by environment protections (Settings → Environments → production)
+    environment: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && 'production' || '' }}
 
-            - name: Setup Terraform
-              uses: hashicorp/setup-terraform@v3
-              # Consider adding a specific 'terraform_version' here for reproducibility.
+    steps:
+      - uses: actions/checkout@v4
 
-            - name: Configure AWS credentials (OIDC)
-              uses: aws-actions/configure-aws-credentials@v4
-              # Assumes the powerful IAM role created during the bootstrap phase.
-              # This replaces the need for static access keys (a huge security win!).
-              with:
-                  role-to-assume: ${{ vars.AWS_ROLE_ARN }} # ARN of the role to assume, sourced from a repo variable.
-                  aws-region: ${{ vars.AWS_REGION }} # Target AWS region, sourced from a repo variable.
-                  role-session-name: gha-tf-${{ github.run_id }} # Unique session name for CloudTrail traceability.
+      - name: Preflight — verify Variables (OIDC mode)
+        shell: bash
+        run: |
+          set -eu
+          [ -n "${{ vars.AWS_REGION }}" ] || { echo "Missing variable: AWS_REGION"; exit 1; }
+          [ -n "${{ vars.AWS_ROLE_ARN }}" ] || { echo "Missing variable: AWS_ROLE_ARN"; exit 1; }
+          [ -n "${{ vars.TF_STATE_BUCKET }}" ] || { echo "Missing variable: TF_STATE_BUCKET"; exit 1; }
+          [ -n "${{ vars.TF_STATE_TABLE }}" ] || { echo "Missing variable: TF_STATE_TABLE"; exit 1; }
+          [ -n "${{ vars.TF_STATE_KEY }}" ] || { echo "Missing variable: TF_STATE_KEY"; exit 1; }
+          if [[ ! "${{ vars.AWS_REGION }}" =~ ^[a-z]+-[a-z]+-[0-9]+$ ]]; then
+            echo "Invalid AWS_REGION: '${{ vars.AWS_REGION }}'"
+            exit 1
+          fi
+          echo "Preflight OK."
 
-            - name: Terraform Init (uses backend-config from repo Variables)
-              # Initializes Terraform, dynamically injecting the remote S3/DynamoDB
-              # backend configuration using variables set during the bootstrap.
-              run: |
-                  terraform init -input=false \
-                    -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
-                    -backend-config="key=${{ vars.TF_STATE_KEY }}" \
-                    -backend-config="region=${{ vars.AWS_REGION }}" \
-                    -backend-config="dynamodb_table=${{ vars.TF_STATE_TABLE }}" \
-                    -backend-config="encrypt=true"
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
 
-            - name: Terraform Validate & Plan
-              # Run formatting checks, structural validation, and generate the execution plan.
-              run: |
-                  terraform fmt -check
-                  terraform validate
-                  # The plan output is saved to a binary file (tfplan.bin) for secure, immutable deployment later.
-                  terraform plan -input=false -no-color -out=tfplan.bin
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: gha-tf-${{ github.run_id }}
 
-            - name: Upload plan artifact (for PRs/review)
-              # For non-main branches (i.e., feature branches and PRs), upload the plan file.
-              # This allows reviewers to download and inspect the exact changes before merging.
-              if: github.ref != 'refs/heads/main'
-              uses: actions/upload-artifact@v4
-              with:
-                  name: tfplan
-                  path: tfplan.bin
+      - name: Sanity — whoami
+        run: aws sts get-caller-identity
 
-            - name: Terraform Apply (only on main)
-              # The ultimate deployment step. This is **gated** to run ONLY under two conditions:
-              # 1. The workflow is running on the 'main' branch (`github.ref == 'refs/heads/main'`).
-              # 2. The event was a code push (`github.event_name == 'push'`), preventing PR merges from auto-applying.
-              if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-              # Applies the previously generated, validated plan (`tfplan.bin`).
-              run: terraform apply -input=false -auto-approve tfplan.bin
+      - name: Terraform Init (S3 backend via Variables)
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ vars.TF_STATE_KEY }}" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_STATE_TABLE }}" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform Validate & Plan
+        env:
+          TF_VAR_region: ${{ vars.AWS_REGION }}
+        run: |
+          terraform fmt -check
+          terraform validate
+          terraform plan -input=false -no-color -out=tfplan.bin
+
+      - name: Upload plan artifact (for non-main branches)
+        if: github.ref != 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: tfplan.bin
+
+      - name: Terraform Apply (only on main; gated by environment)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        env:
+          TF_VAR_region: ${{ vars.AWS_REGION }}
+        run: terraform apply -input=false -auto-approve tfplan.bin

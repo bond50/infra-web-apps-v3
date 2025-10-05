@@ -1,0 +1,122 @@
+###############################################################
+# 05 - PR Quality Gate (fmt → validate → TFLint → Checkov → Plan)
+# Purpose:
+#  - Fast feedback on pull_requests.
+#  - Runs with OIDC (read-only; no apply).
+#  - Uploads plan as artifact for reviewers.
+# Notes:
+#  - Uses repo Variables created by bootstrap:
+#    AWS_REGION, AWS_ROLE_ARN, TF_STATE_BUCKET, TF_STATE_TABLE, TF_STATE_KEY
+###############################################################
+name: 05 - PR Quality Gate
+
+on:
+    pull_request:
+        branches: ["**"]
+
+permissions:
+    id-token: write # OIDC
+    contents: read
+    pull-requests: write # (optional) to post annotations/comments later
+
+concurrency:
+    group: pr-quality-${{ github.event.pull_request.number }}
+    cancel-in-progress: true
+
+jobs:
+    pr-quality:
+        runs-on: ubuntu-latest
+
+        steps:
+            - uses: actions/checkout@v4
+
+            ###############################################################
+            # Preflight: verify Variables exist & region format is valid
+            ###############################################################
+            - name: Preflight — verify Variables
+              shell: bash
+              run: |
+                  set -eu
+                  [ -n "${{ vars.AWS_REGION }}" ] || { echo "Missing variable: AWS_REGION"; exit 1; }
+                  [ -n "${{ vars.AWS_ROLE_ARN }}" ] || { echo "Missing variable: AWS_ROLE_ARN"; exit 1; }
+                  [ -n "${{ vars.TF_STATE_BUCKET }}" ] || { echo "Missing variable: TF_STATE_BUCKET"; exit 1; }
+                  [ -n "${{ vars.TF_STATE_TABLE }}" ] || { echo "Missing variable: TF_STATE_TABLE"; exit 1; }
+                  [ -n "${{ vars.TF_STATE_KEY }}" ] || { echo "Missing variable: TF_STATE_KEY"; exit 1; }
+                  if [[ ! "${{ vars.AWS_REGION }}" =~ ^[a-z]+-[a-z]+-[0-9]+$ ]]; then
+                    echo "Invalid AWS_REGION: '${{ vars.AWS_REGION }}' (expected 'us-east-1', 'eu-west-1', etc.)"
+                    exit 1
+                  fi
+                  echo "Preflight OK."
+
+            - name: Setup Terraform
+              uses: hashicorp/setup-terraform@v3
+              with:
+                  terraform_version: 1.6.0
+
+            - name: Configure AWS credentials (OIDC)
+              uses: aws-actions/configure-aws-credentials@v4
+              with:
+                  role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+                  aws-region: ${{ vars.AWS_REGION }}
+                  role-session-name: gha-pr-${{ github.run_id }}
+
+            - name: Terraform Init (S3 backend via Variables; no lock/refresh during PR)
+              run: |
+                  terraform init -input=false \
+                    -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+                    -backend-config="key=${{ vars.TF_STATE_KEY }}" \
+                    -backend-config="region=${{ vars.AWS_REGION }}" \
+                    -backend-config="dynamodb_table=${{ vars.TF_STATE_TABLE }}" \
+                    -backend-config="encrypt=true"
+
+            ###############################################################
+            # FMT + VALIDATE
+            ###############################################################
+            - name: Terraform fmt (check only)
+              run: terraform fmt -check -recursive
+
+            - name: Terraform validate
+              env:
+                  TF_VAR_region: ${{ vars.AWS_REGION }}
+              run: terraform validate
+
+            ###############################################################
+            # TFLint (best-practice lints for AWS/Terraform)
+            ###############################################################
+            - name: Setup TFLint
+              uses: terraform-linters/setup-tflint@v4
+              with:
+                  tflint_version: v0.50.3
+
+            - name: TFLint init & run
+              run: |
+                  tflint --init
+                  tflint -f compact
+
+            ###############################################################
+            # Checkov (policy/security scan for Terraform)
+            ###############################################################
+            - name: Setup Python
+              uses: actions/setup-python@v5
+              with:
+                  python-version: "3.11"
+
+            - name: Install Checkov
+              run: pip install --quiet checkov
+
+            - name: Checkov scan (fail on findings)
+              run: checkov -d . --framework terraform
+
+            ###############################################################
+            # PLAN (no lock, no refresh) and upload artifact for reviewers
+            ###############################################################
+            - name: Terraform plan (safe for PRs)
+              env:
+                  TF_VAR_region: ${{ vars.AWS_REGION }}
+              run: terraform plan -input=false -no-color -lock=false -refresh=false -out=tfplan.bin
+
+            - name: Upload plan artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: tfplan-pr-${{ github.event.pull_request.number }}
+                  path: tfplan.bin
