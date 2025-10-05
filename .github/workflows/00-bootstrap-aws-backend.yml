@@ -74,6 +74,12 @@ jobs:
                   aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
                   aws-region: ${{ vars.AWS_REGION }}
 
+            - name: Destroy if exist (bootstrap)
+              working-directory: ./bootstrap
+              # Initialize Terraform for the *local* backend. The remote backend (S3/DDB)
+              # is defined in the code and will be created on apply.
+              run: terraform deatroy
+
             - name: Terraform Init (bootstrap)
               working-directory: ./bootstrap
               # Initialize Terraform for the *local* backend. The remote backend (S3/DDB)
