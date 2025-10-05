@@ -184,42 +184,6 @@ resource "aws_iam_role_policy_attachment" "gha_admin" {
 
 # AWS Region where the infrastructure will be deployed.
 resource "github_actions_variable" "aws_region" {
-  repository = var.github_repo
-  name       = "AWS_REGION"
-  value      = var.aws_region
-}
-
-# The ARN of the IAM role to be assumed by the GitHub Actions workflow.
-resource "github_actions_variable" "aws_role_arn" {
-  repository = var.github_repo
-  name       = "AWS_ROLE_ARN"
-  value      = aws_iam_role.github_actions.arn
-}
-# The name of the S3 bucket where Terraform state is stored.
-resource "github_actions_variable" "tf_state_bucket" {
-  repository = var.github_repo
-  name       = "TF_STATE_BUCKET"
-  value      = aws_s3_bucket.tfstate.bucket
-}
-
-# The name of the DynamoDB table used for state locking.
-resource "github_actions_variable" "tf_state_table" {
-  repository = var.github_repo
-  name       = "TF_STATE_TABLE"
-  value      = aws_dynamodb_table.tf_lock.name
-}
-
-# The key (path) within the S3 bucket for the primary state file.
-resource "github_actions_variable" "tf_state_key" {
-  repository = var.github_repo
-  name       = "TF_STATE_KEY"
-  value      = var.tf_state_key
-}
-############################
-# GitHub repo Variables (for later CI)
-############################
-# AWS Region where the infrastructure will be deployed.
-resource "github_actions_variable" "aws_region" {
   repository    = var.github_repo
   variable_name = "AWS_REGION"
   value         = var.aws_region
