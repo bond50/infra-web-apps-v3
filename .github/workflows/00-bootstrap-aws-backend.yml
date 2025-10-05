@@ -78,7 +78,7 @@ jobs:
               working-directory: ./bootstrap
               # Initialize Terraform for the *local* backend. The remote backend (S3/DDB)
               # is defined in the code and will be created on apply.
-              run: terraform deatroy
+              run: terraform destroy
 
             - name: Terraform Init (bootstrap)
               working-directory: ./bootstrap
