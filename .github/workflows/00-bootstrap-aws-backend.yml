@@ -13,133 +13,171 @@
 name: 00 - Bootstrap AWS Backend
 
 on:
-    workflow_dispatch:
-        inputs:
-            bucket_name:
-                description: "Globally-unique S3 bucket for Terraform state (e.g., my-tfstate-1234abcd)"
-                required: true
-            dynamodb_table_name:
-                description: "DynamoDB table for state locking (e.g., tf-locks-my-tfstate)"
-                required: true
-            tf_state_key:
-                description: "State key path (e.g., infra/terraform.tfstate)"
-                required: true
-            github_owner:
-                description: "GitHub owner/org (e.g., bond50)"
-                required: true
-            github_repo:
-                description: "GitHub repo name (no owner, e.g., infra-web-apps-v3)"
-                required: true
-            project_name:
-                description: "Project short name (tags & IAM role name prefix)"
-                required: true
-                default: "web-apps"
+  workflow_dispatch:
+    inputs:
+      bucket_name:
+        description: "Globally-unique S3 bucket for Terraform state (e.g., my-tfstate-1234abcd)"
+        required: true
+      dynamodb_table_name:
+        description: "DynamoDB table for state locking (e.g., tf-locks-my-tfstate)"
+        required: true
+      tf_state_key:
+        description: "State key path (e.g., infra/terraform.tfstate)"
+        required: true
+      github_owner:
+        description: "GitHub owner/org (e.g., bond50)"
+        required: true
+      github_repo:
+        description: "GitHub repo name (no owner, e.g., infra-web-apps-v3)"
+        required: true
+      project_name:
+        description: "Project short name (tags & IAM role name prefix)"
+        required: true
+        default: "web-apps"
 
 permissions:
-    contents: read
-    actions: write
+  contents: read
+  actions: write
 
 jobs:
-    bootstrap:
-        runs-on: ubuntu-latest
+  bootstrap:
+    runs-on: ubuntu-latest
 
+    env:
+      ###############################################################
+      # Map inputs to TF_VAR_* so Terraform picks them up automatically
+      ###############################################################
+      TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+      TF_VAR_project_name: ${{ inputs.project_name }}
+      TF_VAR_bucket_name: ${{ inputs.bucket_name }}
+      TF_VAR_dynamodb_table_name: ${{ inputs.dynamodb_table_name }}
+      TF_VAR_tf_state_key: ${{ inputs.tf_state_key }}
+      TF_VAR_github_owner: ${{ inputs.github_owner }}
+      TF_VAR_github_repo: ${{ inputs.github_repo }}
+      TF_VAR_github_token: ${{ secrets.GH_ADMIN_TOKEN }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      ###############################################################
+      # Preflight: ensure bootstrap secrets/vars exist & region format is valid
+      ###############################################################
+      - name: Preflight — verify inputs/secrets/vars
+        shell: bash
+        run: |
+          set -eu
+          [ -n "${{ secrets.AWS_ACCESS_KEY_ID }}" ]     || { echo "Missing secret: AWS_ACCESS_KEY_ID"; exit 1; }
+          [ -n "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ] || { echo "Missing secret: AWS_SECRET_ACCESS_KEY"; exit 1; }
+          [ -n "${{ secrets.GH_ADMIN_TOKEN }}" ]        || { echo "Missing secret: GH_ADMIN_TOKEN"; exit 1; }
+          [ -n "${{ vars.AWS_REGION }}" ]               || { echo "Missing variable: AWS_REGION"; exit 1; }
+          if [[ ! "${{ vars.AWS_REGION }}" =~ ^[a-z]+-[a-z]+-[0-9]+$ ]]; then
+            echo "Invalid AWS_REGION: '${{ vars.AWS_REGION }}' (expected 'us-east-1', 'eu-west-1', etc.)"
+            exit 1
+          fi
+          echo "Preflight OK."
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+
+      ###############################################################
+      # Configure TEMPORARY AWS credentials for bootstrap ONLY
+      ###############################################################
+      - name: Configure AWS credentials (temporary bootstrap keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Sanity — whoami
+        run: aws sts get-caller-identity
+
+      - name: Terraform Init (bootstrap module)
+        working-directory: ./bootstrap
+        run: terraform init -input=false
+
+      ###############################################################
+      # IMPORT-IF-PRESENT: make reruns idempotent
+      # Imports for: OIDC provider, repo variables, S3 bucket,
+      # DynamoDB lock table, IAM role, and role policy attachment.
+      ###############################################################
+      - name: Import existing OIDC provider if present
+        shell: bash
+        run: |
+          set -eu
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          OIDC_ARN="arn:aws:iam::${ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com"
+          COUNT="$(aws iam list-open-id-connect-providers \
+            --query "OpenIDConnectProviderList[?Arn=='${OIDC_ARN}'] | length(@)" --output text)"
+          if [ "${COUNT}" != "0" ]; then
+            echo "OIDC provider exists; importing: ${OIDC_ARN}"
+            terraform -chdir=./bootstrap import -input=false aws_iam_openid_connect_provider.github "${OIDC_ARN}" || true
+          else
+            echo "OIDC provider does not exist yet — will be created by apply."
+          fi
+
+      - name: Import existing GitHub repo variables if present
+        shell: bash
         env:
-            ###############################################################
-            # Map inputs to TF_VAR_* so Terraform picks them up automatically
-            ###############################################################
-            TF_VAR_aws_region: ${{ vars.AWS_REGION }}
-            TF_VAR_project_name: ${{ inputs.project_name }}
-            TF_VAR_bucket_name: ${{ inputs.bucket_name }}
-            TF_VAR_dynamodb_table_name: ${{ inputs.dynamodb_table_name }}
-            TF_VAR_tf_state_key: ${{ inputs.tf_state_key }}
-            TF_VAR_github_owner: ${{ inputs.github_owner }}
-            TF_VAR_github_repo: ${{ inputs.github_repo }}
-            TF_VAR_github_token: ${{ secrets.GH_ADMIN_TOKEN }}
+          REPO: ${{ inputs.github_repo }}
+        run: |
+          set -eu
+          terraform -chdir=./bootstrap import -input=false github_actions_variable.aws_region      "${REPO}:AWS_REGION"      || true
+          terraform -chdir=./bootstrap import -input=false github_actions_variable.tf_state_bucket "${REPO}:TF_STATE_BUCKET" || true
+          terraform -chdir=./bootstrap import -input=false github_actions_variable.tf_state_table  "${REPO}:TF_STATE_TABLE"  || true
+          terraform -chdir=./bootstrap import -input=false github_actions_variable.tf_state_key    "${REPO}:TF_STATE_KEY"    || true
+          terraform -chdir=./bootstrap import -input=false github_actions_variable.aws_role_arn    "${REPO}:AWS_ROLE_ARN"    || true
+          echo "Repo variable imports done."
 
-        steps:
-            - name: Check out repository
-              uses: actions/checkout@v4
+      - name: Import existing S3 bucket if present
+        shell: bash
+        run: |
+          set -eu
+          BUCKET="${{ inputs.bucket_name }}"
+          if aws s3api head-bucket --bucket "${BUCKET}" 2>/dev/null; then
+            echo "S3 bucket exists; importing: ${BUCKET}"
+            terraform -chdir=./bootstrap import -input=false aws_s3_bucket.tfstate "${BUCKET}" || true
+          else
+            echo "S3 bucket does not exist yet — will be created by apply."
+          fi
 
-            ###############################################################
-            # Preflight: ensure bootstrap secrets/vars exist & region format is valid
-            ###############################################################
-            - name: Preflight — verify inputs/secrets/vars
-              shell: bash
-              run: |
-                  set -eu
-                  [ -n "${{ secrets.AWS_ACCESS_KEY_ID }}" ]     || { echo "Missing secret: AWS_ACCESS_KEY_ID"; exit 1; }
-                  [ -n "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ] || { echo "Missing secret: AWS_SECRET_ACCESS_KEY"; exit 1; }
-                  [ -n "${{ secrets.GH_ADMIN_TOKEN }}" ]        || { echo "Missing secret: GH_ADMIN_TOKEN"; exit 1; }
-                  [ -n "${{ vars.AWS_REGION }}" ]               || { echo "Missing variable: AWS_REGION"; exit 1; }
-                  if [[ ! "${{ vars.AWS_REGION }}" =~ ^[a-z]+-[a-z]+-[0-9]+$ ]]; then
-                    echo "Invalid AWS_REGION: '${{ vars.AWS_REGION }}' (expected 'us-east-1', 'eu-west-1', etc.)"
-                    exit 1
-                  fi
-                  echo "Preflight OK."
+      - name: Import existing DynamoDB lock table if present
+        shell: bash
+        run: |
+          set -eu
+          TABLE="${{ inputs.dynamodb_table_name }}"
+          if aws dynamodb describe-table --table-name "${TABLE}" >/dev/null 2>&1; then
+            echo "DynamoDB table exists; importing: ${TABLE}"
+            terraform -chdir=./bootstrap import -input=false aws_dynamodb_table.tf_lock "${TABLE}" || true
+          else
+            echo "DynamoDB table does not exist yet — will be created by apply."
+          fi
 
-            - name: Setup Terraform
-              uses: hashicorp/setup-terraform@v3
-              with:
-                  terraform_version: 1.6.0
+      - name: Import existing IAM role + policy attachment if present
+        shell: bash
+        run: |
+          set -eu
+          ROLE_NAME="${{ inputs.project_name }}-gha"
+          if aws iam get-role --role-name "${ROLE_NAME}" >/dev/null 2>&1; then
+            echo "IAM role exists; importing: ${ROLE_NAME}"
+            terraform -chdir=./bootstrap import -input=false aws_iam_role.github_actions "${ROLE_NAME}" || true
+            ATTACH_ID="${ROLE_NAME}/arn:aws:iam::aws:policy/AdministratorAccess"
+            echo "Importing role policy attachment: ${ATTACH_ID}"
+            terraform -chdir=./bootstrap import -input=false aws_iam_role_policy_attachment.gha_admin "${ATTACH_ID}" || true
+          else
+            echo "IAM role does not exist yet — will be created by apply."
+          fi
 
-            ###############################################################
-            # Configure TEMPORARY AWS credentials for bootstrap ONLY
-            ###############################################################
-            - name: Configure AWS credentials (temporary bootstrap keys)
-              uses: aws-actions/configure-aws-credentials@v4
-              with:
-                  aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-                  aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-                  aws-region: ${{ vars.AWS_REGION }}
+      ###############################################################
+      # Apply bootstrap (idempotent after imports)
+      ###############################################################
+      - name: Terraform Apply (bootstrap)
+        working-directory: ./bootstrap
+        run: terraform apply -auto-approve -input=false
 
-            - name: Sanity — whoami
-              run: aws sts get-caller-identity
-
-            - name: Terraform Init (bootstrap module)
-              working-directory: ./bootstrap
-              run: terraform init -input=false
-
-            ###############################################################
-            # IMPORT-IF-PRESENT: OIDC provider + GitHub repo variables
-            # Why: prevents 409/EntityAlreadyExists when rerunning bootstrap
-            ###############################################################
-            - name: Import existing OIDC provider if present
-              shell: bash
-              run: |
-                  set -eu
-                  ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
-                  OIDC_ARN="arn:aws:iam::${ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com"
-                  # Check existence
-                  COUNT="$(aws iam list-open-id-connect-providers \
-                    --query "OpenIDConnectProviderList[?Arn=='${OIDC_ARN}'] | length(@)" --output text)"
-                  if [ "${COUNT}" != "0" ]; then
-                    echo "OIDC provider exists; importing into state: ${OIDC_ARN}"
-                    terraform -chdir=./bootstrap import -input=false aws_iam_openid_connect_provider.github "${OIDC_ARN}" || true
-                  else
-                    echo "OIDC provider does not exist yet — will be created by apply."
-                  fi
-
-            - name: Import existing GitHub repo variables if present
-              shell: bash
-              env:
-                  REPO: ${{ inputs.github_repo }}
-              run: |
-                  set -eu
-                  # Each import will succeed if present, no-op if absent
-                  terraform -chdir=./bootstrap import -input=false github_actions_variable.aws_region      "${REPO}:AWS_REGION"      || true
-                  terraform -chdir=./bootstrap import -input=false github_actions_variable.tf_state_bucket "${REPO}:TF_STATE_BUCKET" || true
-                  terraform -chdir=./bootstrap import -input=false github_actions_variable.tf_state_table  "${REPO}:TF_STATE_TABLE"  || true
-                  terraform -chdir=./bootstrap import -input=false github_actions_variable.tf_state_key    "${REPO}:TF_STATE_KEY"    || true
-                  terraform -chdir=./bootstrap import -input=false github_actions_variable.aws_role_arn    "${REPO}:AWS_ROLE_ARN"    || true
-                  echo "Pre-imports completed (existing variables, if any, are now managed)."
-
-            ###############################################################
-            # Apply bootstrap (idempotent after imports)
-            ###############################################################
-            - name: Terraform Apply (bootstrap)
-              working-directory: ./bootstrap
-              run: terraform apply -auto-approve -input=false
-
-            - name: Show outputs
-              working-directory: ./bootstrap
-              run: terraform output
+      - name: Show outputs
+        working-directory: ./bootstrap
+        run: terraform output
