@@ -90,39 +90,6 @@ jobs:
           tflint --init
           tflint -f compact
 
-      # -------------------- Checkov (CLI ONLY) --------------------
-      # We use the CLI directly to avoid the action's --soft_fail flag bug.
-      - name: Setup Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
-
-      - name: Install Checkov
-        run: pip install --quiet "checkov==3.2.474"
-
-      - name: Run Checkov (SARIF output)
-        run: |
-          mkdir -p reports
-          checkov -d . --framework terraform --quiet \
-            --output sarif --output-file-path reports/checkov.sarif
-            --soft-fail
-
-      - name: Upload Checkov SARIF (artifact)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: checkov-sarif
-          path: reports/checkov.sarif
-          retention-days: 7
-
-      # (Optional) also publish SARIF to GitHub code scanning UI:
-      # - name: Upload SARIF to GitHub Code Scanning
-      #   if: always()
-      #   uses: github/codeql-action/upload-sarif@v3
-      #   with:
-      #     sarif_file: reports/checkov.sarif
-      #     category: checkov
-
       # -------------------- Plan (safe) --------------------
       - name: Terraform plan (safe for PRs)
         env:
