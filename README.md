@@ -168,3 +168,4 @@ If you get stuck, open a PR and let **05 - PR Quality Gate** annotate findings, 
 - **Contributor guide** → [CONTRIBUTING.md](CONTRIBUTING.md)  
 - **Branch rulesets one-pagers** → [Rulesets-Overview.md](Rulesets-Overview.md)  
   - [main](Ruleset-main.md) • [develop](Ruleset-develop.md) • [release/*](Ruleset-release-star.md) • [hotfix/*](Ruleset-hotfix-star.md)
+- Smoke test Mon Oct  6 09:20:04 EAST 2025
