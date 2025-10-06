@@ -1,29 +1,32 @@
 ###############################################################
 # 10 - Terraform (plan on branches, apply on main)
-#  - Plan on any push/PR
-#  - Apply only on push to main (gated by environment "production")
-#  - S3 backend only (no DynamoDB); per-branch workspace; -lock=false
+# Purpose:
+#  - Use GitHub OIDC to assume AWS role (no static keys).
+#  - Plan on branches/PRs; Apply only on main push.
+#  - Protect apply with GitHub Environment "production" (set reviewers).
 ###############################################################
 name: 10 - Terraform (plan on branches, apply on main)
 
 on:
-  push:
+  push:                       # ← Run on pushes (feature/*, develop, release/*, hotfix/*, main)
     branches: ["**"]
-  pull_request:
+  pull_request:               # ← Also run on PRs (plans only)
     branches: ["**"]
 
 permissions:
-  id-token: write
-  contents: read
+  id-token: write             # ← Needed for OIDC to assume role
+  contents: read              # ← Needed to checkout
 
 concurrency:
-  group: terraform-${{ github.ref_name }}
-  cancel-in-progress: true
+  group: terraform-${{ github.ref_name }}     # ← One run per branch name
+  cancel-in-progress: true                    # ← Cancel older run on new push
 
 jobs:
   tf:
     runs-on: ubuntu-latest
-    # Gate apply behind an environment with reviewers
+
+    # Apply is gated by environment protections (Settings → Environments → production)
+    # Only set environment when it's a PUSH to main; PRs & other branches are not gated.
     environment: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && 'production' || '' }}
 
     steps:
@@ -37,19 +40,23 @@ jobs:
           [ -n "${{ vars.AWS_REGION }}" ]      || { echo "Missing variable: AWS_REGION"; exit 1; }
           [ -n "${{ vars.AWS_ROLE_ARN }}" ]    || { echo "Missing variable: AWS_ROLE_ARN"; exit 1; }
           [ -n "${{ vars.TF_STATE_BUCKET }}" ] || { echo "Missing variable: TF_STATE_BUCKET"; exit 1; }
-          [ -n "${{ vars.TF_STATE_KEY }}" ]    || { echo "Missing variable: TF_STATE_KEY"; exit 1; }
+          [ -n "${{ vars.TF_STATE_TABLE }}" ] || { echo "Missing variable: TF_STATE_TABLE"; exit 1; }
+          [ -n "${{ vars.TF_STATE_KEY }}" ] || { echo "Missing variable: TF_STATE_KEY"; exit 1; }
+          if [[ ! "${{ vars.AWS_REGION }}" =~ ^[a-z]+-[a-z]+-[0-9]+$ ]]; then
+            echo "Invalid AWS_REGION: '${{ vars.AWS_REGION }}'"; exit 1
+          fi
           echo "Preflight OK."
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.13.3
+          terraform_version: 1.13.3           # ← Pinned Terraform CLI
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v5
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume:   ${{ vars.AWS_ROLE_ARN }}  # ← Role created by bootstrap
+          aws-region:       ${{ vars.AWS_REGION }}
           role-session-name: gha-tf-${{ github.run_id }}
 
       - name: Sanity — whoami
@@ -58,16 +65,7 @@ jobs:
       - name: Terraform Init (S3 backend only) + Workspace
         shell: bash
         run: |
-          set -euo pipefail
-          RAW="${GITHUB_REF_NAME:-main}"
-          WS="branch-${RAW//[^a-zA-Z0-9-_]/-}"
-          echo "Using workspace: $WS"
-
-          terraform init -input=false \
-            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
-            -backend-config="key=${{ vars.TF_STATE_KEY }}/ci/terraform.tfstate" \
-            -backend-config="region=${{ vars.AWS_REGION }}" \
-            -backend-config="encrypt=true"
+          terraform init -input=false             -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"             -backend-config="key=${{ vars.TF_STATE_KEY }}"             -backend-config="region=${{ vars.AWS_REGION }}"             -backend-config="dynamodb_table=${{ vars.TF_STATE_TABLE }}"             -backend-config="encrypt=true"
 
           terraform workspace list || true
           terraform workspace select "$WS" || terraform workspace new "$WS"
