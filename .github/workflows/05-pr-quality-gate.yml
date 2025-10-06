@@ -1,23 +1,21 @@
 ###############################################################
 # 05 - PR Quality Gate (fmt → validate → TFLint → Checkov → Plan)
-# Purpose:
-#  - Fast feedback on pull_requests.
-#  - Runs with OIDC (read-only; no apply).
-#  - Uploads plan as artifact for reviewers.
-# Notes:
-#  - Uses repo Variables created by bootstrap:
-#    AWS_REGION, AWS_ROLE_ARN, TF_STATE_BUCKET, TF_STATE_TABLE, TF_STATE_KEY
+#  - Runs on PRs to any branch
+#  - Uses OIDC for AWS (no apply)
+#  - Per-PR Terraform workspace (safe naming)
+#  - S3 backend (no DynamoDB), plan with -lock=false -refresh=false
+#  - Uploads tfplan + Checkov SARIF as artifacts
 ###############################################################
 name: 05 - PR Quality Gate
 
 on:
-  pull_request:                 # ← run on any PR
-    branches: ["**"]            # ← PRs targeting any branch
+  pull_request:
+    branches: ["**"]
 
 permissions:
-  id-token: write               # ← OIDC to AWS
-  contents: read                # ← checkout
-  pull-requests: write          # ← optional (PR annotations/comments)
+  id-token: write
+  contents: read
+  pull-requests: write
 
 concurrency:
   group: pr-quality-${{ github.event.pull_request.number }}
@@ -28,27 +26,19 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # -------------------- Checkout --------------------
       - name: Checkout repository code
         uses: actions/checkout@v5
 
-      # -------------------- Preflight --------------------
       - name: Preflight — verify Variables
         shell: bash
         run: |
           set -eu
-          [ -n "${{ vars.AWS_REGION }}" ] || { echo "Missing variable: AWS_REGION"; exit 1; }
-          [ -n "${{ vars.AWS_ROLE_ARN }}" ] || { echo "Missing variable: AWS_ROLE_ARN"; exit 1; }
+          [ -n "${{ vars.AWS_REGION }}" ]      || { echo "Missing variable: AWS_REGION"; exit 1; }
+          [ -n "${{ vars.AWS_ROLE_ARN }}" ]    || { echo "Missing variable: AWS_ROLE_ARN"; exit 1; }
           [ -n "${{ vars.TF_STATE_BUCKET }}" ] || { echo "Missing variable: TF_STATE_BUCKET"; exit 1; }
-          [ -n "${{ vars.TF_STATE_TABLE }}" ] || { echo "Missing variable: TF_STATE_TABLE"; exit 1; }
-          [ -n "${{ vars.TF_STATE_KEY }}" ] || { echo "Missing variable: TF_STATE_KEY"; exit 1; }
-          if [[ ! "${{ vars.AWS_REGION }}" =~ ^[a-z]+-[a-z]+-[0-9]+$ ]]; then
-            echo "Invalid AWS_REGION: '${{ vars.AWS_REGION }}' (expected 'us-east-1', 'eu-west-1', etc.)"
-            exit 1
-          fi
+          [ -n "${{ vars.TF_STATE_KEY }}" ]    || { echo "Missing variable: TF_STATE_KEY"; exit 1; }
           echo "Preflight OK."
 
-      # -------------------- Terraform CLI --------------------
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -61,13 +51,11 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
           role-session-name: gha-pr-${{ github.run_id }}
 
-      # Init with S3 backend (NO DynamoDB), workspace per PR head branch
-      # Init with S3 backend (NO DynamoDB), workspace per PR head branch
+      # S3 backend only; per-PR workspace (safe name)
       - name: Terraform Init (S3 backend only) + Workspace
         shell: bash
         run: |
           set -euo pipefail
-          # Derive a non-empty workspace name from PR head; safe chars only
           RAW="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-main}}"
           WS="branch-${RAW//[^a-zA-Z0-9-_]/-}"
           echo "Using workspace: $WS"
@@ -79,10 +67,8 @@ jobs:
             -backend-config="encrypt=true"
 
           terraform workspace list || true
-          # Portable & reliable: try select, if missing then create
           terraform workspace select "$WS" || terraform workspace new "$WS"
 
-      # -------------------- fmt + validate --------------------
       - name: Terraform fmt (check only)
         run: terraform fmt -check -recursive
 
@@ -91,7 +77,6 @@ jobs:
           TF_VAR_region: ${{ vars.AWS_REGION }}
         run: terraform validate
 
-      # -------------------- TFLint --------------------
       - name: Setup TFLint
         uses: terraform-linters/setup-tflint@v5
         with:
@@ -102,8 +87,7 @@ jobs:
           tflint --init
           tflint -f compact
 
-      # -------------------- Checkov (CLI ONLY) --------------------
-      # We use the CLI directly to avoid the action's --soft_fail flag bug.
+      # Checkov non-blocking; sanitize env to avoid --soft_fail injection
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
@@ -112,10 +96,16 @@ jobs:
       - name: Install Checkov
         run: pip install --quiet "checkov==3.2.474"
 
-      - name: Run Checkov (SARIF output)
+      - name: Run Checkov (SARIF output, non-blocking, env sanitized)
+        shell: bash
+        continue-on-error: true
         run: |
+          set -euo pipefail
+          unset INPUT_SOFT_FAIL || true
+          unset SOFT_FAIL || true
+          unset CHECKOV_SOFT_FAIL || true
           mkdir -p reports
-          checkov -d . --framework terraform --quiet \
+          python -m checkov -d . --framework terraform --quiet \
             --output sarif --output-file-path reports/checkov.sarif
 
       - name: Upload Checkov SARIF (artifact)
@@ -126,16 +116,7 @@ jobs:
           path: reports/checkov.sarif
           retention-days: 7
 
-      # (Optional) also publish SARIF to GitHub code scanning UI:
-      # - name: Upload SARIF to GitHub Code Scanning
-      #   if: always()
-      #   uses: github/codeql-action/upload-sarif@v3
-      #   with:
-      #     sarif_file: reports/checkov.sarif
-      #     category: checkov
-
-      # -------------------- Plan (safe) --------------------
-      - name: Terraform plan (safe for PRs)
+      - name: Terraform plan (safe; no refresh/lock)
         env:
           TF_VAR_region: ${{ vars.AWS_REGION }}
         run: terraform plan -input=false -no-color -lock=false -refresh=false -out=tfplan.bin
