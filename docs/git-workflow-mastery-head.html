@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Git Workflow Mastery Guide (with HEAD & Bail‑outs)</title>
+<style>
+  body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; margin: 0; padding: 0; background-color: #f7fafc; color: #1a202c; }
+  .container { max-width: 1040px; margin: 32px auto; padding: 24px; background:#fff; border-radius:12px; box-shadow: 0 6px 22px rgba(0,0,0,.06); }
+  h1,h2,h3 { color:#1a365d; }
+  h1 { text-align:center; margin: 0 0 16px; }
+  h2 { margin-top:28px; border-bottom: 2px solid #edf2f7; padding-bottom: 6px; }
+  h3 { margin-top:16px; color:#2d3748; }
+  .workflow { margin: 22px 0 28px; padding:16px; background:#f7fafc; border-left:6px solid #2b6cb0; border-radius:8px; }
+  .workflow.core { border-left-color:#38a169; }
+  .workflow.hotfix { border-left-color:#e53e3e; }
+  .quick-guide { margin: 18px 0; padding: 14px 16px; border: 1px solid #bee3f8; background:#ebf8ff; border-radius:8px; }
+  .note { background:#fefcbf; border:1px solid #faf089; padding:10px 12px; border-radius:6px; margin:10px 0; }
+  code { background:#edf2f7; padding:2px 6px; border-radius:4px; font-family: Consolas, 'Courier New', monospace; color:#d53f8c; }
+  pre { background:#1a202c; color:#e2e8f0; padding:12px; border-radius:8px; overflow:auto; }
+  pre code { color:inherit; background:transparent; }
+  ul { margin: 8px 0 8px 18px; }
+  li { margin: 6px 0; }
+  .explanation-box { background:#f7fafc; border:1px solid #e2e8f0; border-radius:8px; padding:12px; margin-top:10px; }
+  .merge-note { color:#e53e3e; font-weight:bold; }
+  .kicker { color:#4a5568; font-size: 0.95rem; margin: 4px 0 14px; }
+</style>
+</head>
+<body>
+  <div class="container">
+    <h1>Git Workflow Mastery Guide (Git Flow + CI/Terraform)</h1>
+    <p class="kicker">Covers the day‑to‑day branch flow, how to push using <code>HEAD</code>, and quick bail‑outs for the common “I’m stuck” moments.</p>
+
+    <div class="quick-guide">
+      <h2>Quick Decision Guide</h2>
+      <ul>
+        <li><strong>New work (Features)</strong>: <code>feature/*</code> off <code>develop</code> → PR to <code>develop</code>.</li>
+        <li><strong>Shipping to Production</strong>: <code>release/*</code> off <code>develop</code> → PR to <code>main</code> → merge → <strong>APPLY</strong>.</li>
+        <li><strong>Emergency Fix</strong>: <code>hotfix/*</code> off <code>main</code> → PR to <code>main</code> → merge → <strong>APPLY</strong> → Back‑merge to <code>develop</code>.</li>
+      </ul>
+    </div>
+
+    <div class="workflow core">
+      <h2>A. Core Git Sync Commands (Always Start Here)</h2>
+      <p><strong>Goal:</strong> keep your branch perfectly in sync with the remote, with a clean, linear history.</p>
+<pre><code># 1) Refresh your remote tracking branches (safe anywhere)
+git fetch origin
+
+# 2) Get to your target branch (example: develop)
+git switch develop
+
+# 3) Rebase pull = linear history (no noisy merge commits)
+git pull --rebase
+</code></pre>
+      <div class="explanation-box">
+        <p><strong>Why <code>--rebase</code>?</strong> It replays your local commits on top of the newest remote commits, avoiding extra merge commits.</p>
+      </div>
+    </div>
+
+    <div class="workflow core">
+      <h2>B. “HEAD” & Push Cheatsheet</h2>
+      <p><strong>HEAD</strong> = “the commit at your currently checked‑out branch tip.” Handy for first pushes:</p>
+<pre><code># First push: create a same-named remote branch & set upstream
+git push -u origin HEAD
+
+# First push but set a specific remote branch name
+git push -u origin HEAD:feature/my-change
+
+# Subsequent pushes after upstream is set
+git push
+</code></pre>
+      <div class="note">If you see “no upstream branch,” use <code>git push -u origin HEAD</code> once, then just <code>git push</code> from then on.</div>
+    </div>
+
+    <div class="workflow">
+      <h2>1) Everyday Work (Features)</h2>
+      <p><strong>Path:</strong> <code>develop</code> → <code>feature/*</code> → PR → <code>develop</code></p>
+<pre><code># Start clean on develop
+git switch develop
+git pull --rebase
+
+# Create a feature branch
+git switch -c feature/my-change
+
+# Edit files → stage → commit
+git add &lt;files...&gt;
+git commit -m "feat: short description"
+
+# First push sets upstream using HEAD (nice & generic)
+git push -u origin HEAD
+</code></pre>
+      <ul>
+        <li>Open PR: Base = <code>develop</code>, Compare = <code>feature/my-change</code>.</li>
+        <li>CI: “05 - PR Quality Gate” runs (fmt/validate/tflint/checkov/plan). Fix & push as needed.</li>
+        <li>Merge: Squash & merge when green.</li>
+      </ul>
+<pre><code># Sync local develop for the next feature
+git switch develop
+git pull --rebase
+
+# Optional: clean up local branch
+git branch -d feature/my-change
+</code></pre>
+    </div>
+
+    <div class="workflow">
+      <h2>2) Shipping to Production (Release)</h2>
+      <p><strong>Path:</strong> <code>release/*</code> → PR → <code>main</code> → apply</p>
+<pre><code># Cut a release from the latest develop
+git switch develop
+git pull --rebase
+git switch -c release/v0.1.0
+git push -u origin HEAD
+
+# Open PR: Base=main, Compare=release/v0.1.0
+# When green, Squash & merge to main
+
+# On push to main, CI applies automatically (10 - Terraform)
+</code></pre>
+<pre><code># Keep develop in sync with production history
+git switch develop
+git pull --rebase
+git merge --no-ff origin/main
+git push
+</code></pre>
+    </div>
+
+    <div class="workflow hotfix">
+      <h2>3) Urgent Production Fix (Hotfix)</h2>
+      <p><strong>Path:</strong> <code>hotfix/*</code> → PR → <code>main</code> → apply → back‑merge</p>
+<pre><code># Branch off the current production branch
+git switch main
+git pull --rebase
+git switch -c hotfix/fix-bug
+git push -u origin HEAD
+
+# Open PR: Base=main, Compare=hotfix/fix-bug
+# Merge to main → CI applies (10 - Terraform)
+
+# Back-merge to develop so the fix isn't lost
+git switch develop
+git pull --rebase
+git merge --no-ff origin/main
+git push
+</code></pre>
+    </div>
+
+    <div class="workflow core">
+      <h2>4) Conflict Resolution (Mini‑Guide)</h2>
+      <p>When you see conflict markers (<code>&lt;&lt;&lt;&lt;&lt;&lt;&lt;</code>, <code>=======</code>, <code>&gt;&gt;&gt;&gt;&gt;&gt;&gt;</code>) during a merge or rebase:</p>
+      <h3>Pick a side quickly</h3>
+<pre><code># Keep YOUR version entirely (the side you had checked out)
+git checkout --ours path/to/file
+git add path/to/file
+
+# Keep the OTHER version entirely (incoming side)
+git checkout --theirs path/to/file
+git add path/to/file
+</code></pre>
+      <h3>Manual mix</h3>
+      <p>Edit the file, delete the conflict markers, keep the lines you want, then <code>git add path/to/file</code>.</p>
+      <h3>Finish the operation</h3>
+<pre><code># If you were MERGING
+git commit
+
+# If you were REBASING
+git rebase --continue
+
+# Bail out entirely
+git merge --abort   # or: git rebase --abort
+</code></pre>
+    </div>
+
+    <div class="workflow">
+      <h2>5) Common Gotchas & Bail‑outs</h2>
+      <ul>
+        <li><strong>“cannot pull with rebase: You have unstaged changes.”</strong>
+<pre><code>git stash push -u -m "wip"
+git pull --rebase
+git stash pop
+</code></pre>
+        </li>
+        <li><strong>Local pre‑commit hook blocks commit (e.g., pre‑commit not found)</strong>
+<pre><code>git commit -m "msg" --no-verify
+</code></pre>
+        </li>
+        <li><strong>“no upstream branch” on first push</strong>
+<pre><code>git push -u origin HEAD
+</code></pre>
+        </li>
+        <li><strong>CRLF/LF warnings on Windows</strong> — harmless; fix later with a <code>.gitattributes</code> if you want consistent endings.</li>
+      </ul>
+    </div>
+
+    <div class="workflow">
+      <h2>6) CI Quick Reference</h2>
+      <ul>
+        <li><strong>05 - PR Quality Gate</strong> (on PRs): fmt → validate → TFLint → Checkov (non‑blocking, SARIF artifact) → safe <code>terraform plan</code>.</li>
+        <li><strong>10 - Terraform</strong> (on pushes): plan on branches; apply on <code>main</code> (gated by environment if configured).</li>
+      </ul>
+    </div>
+  </div>
+</body>
+</html>

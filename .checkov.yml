@@ -1,0 +1,22 @@
+###############################################################
+# .checkov.yml
+# Purpose:
+#  - Configure policy-as-code scan for Terraform.
+#  - Our CI runs: checkov -d . --framework terraform
+# Notes:
+#  - Start minimal; add skips/soft-fail as you triage findings.
+###############################################################
+
+# Limit to Terraform (we’re scanning IaC only here)
+framework: [terraform]
+
+# Exit with non-zero on findings (keeps PR gate strict).
+soft_fail: false
+# Optionally skip folders (e.g., third-party or experimental)
+# skip_paths:
+#   - "modules/experimental"
+#   - "bootstrap"        # uncomment if bootstrap raises unavoidable warnings
+
+# Optionally skip specific checks (add IDs after triaging)
+# skip_checks:
+#   - CKV_AWS_999  # example placeholder

@@ -1,0 +1,26 @@
+###############################################################
+# .pre-commit-config.yaml
+# Purpose:
+#  - Let devs catch issues locally before pushing (fmt/lint/scan).
+# Usage:
+#  - pip install pre-commit
+#  - pre-commit install
+#  - pre-commit run -a
+###############################################################
+repos:
+    # Terraform fmt via pre-commit hooks (simple wrapper)
+    - repo: https://github.com/antonbabenko/pre-commit-terraform
+      rev: v1.88.2 # pin a stable tag; update when needed
+      hooks:
+          - id: terraform_fmt
+          - id: terraform_validate
+          # TFLint via hook (optional; our CI already runs it)
+          - id: terraform_tflint
+            args: ['--args=--init'] # ensure plugins installed if enabled in .tflint.hcl
+
+    # Checkov via pre-commit hook (optional; CI already runs it)
+    - repo: https://github.com/bridgecrewio/checkov
+      rev: 3.2.474 # pin a stable release if you use the hook locally
+      hooks:
+          - id: checkov
+            args: ['-d', '.', '--framework', 'terraform']
