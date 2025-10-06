@@ -57,14 +57,25 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
           role-session-name: gha-pr-${{ github.run_id }}
 
-      - name: Terraform Init (S3 backend via Variables; no lock/refresh during PR)
+      # Init with S3 backend (NO DynamoDB), workspace per PR head branch
+      - name: Terraform Init (S3 backend only) + Workspace
+        shell: bash
         run: |
+          set -euo pipefail
+          # Derive a non-empty workspace name from PR head; fallback to base/name
+          RAW="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-main}}"
+          WS="branch-${RAW//[^a-zA-Z0-9-_]/-}"
+          echo "Using workspace: $WS"
+
           terraform init -input=false \
             -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
-            -backend-config="key=${{ vars.TF_STATE_KEY }}" \
+            -backend-config="key=${{ vars.TF_STATE_KEY }}/pr/terraform.tfstate" \
             -backend-config="region=${{ vars.AWS_REGION }}" \
-            -backend-config="dynamodb_table=${{ vars.TF_STATE_TABLE }}" \
             -backend-config="encrypt=true"
+
+          terraform workspace list || true
+          # IMPORTANT: flag before the NAME
+          terraform workspace select -or-create "$WS"
 
       # -------------------- fmt + validate --------------------
       - name: Terraform fmt (check only)
