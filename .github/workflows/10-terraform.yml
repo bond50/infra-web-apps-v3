@@ -118,7 +118,6 @@ jobs:
           name: checkov-sarif
           path: reports/checkov.sarif
           retention-days: 7
-
       # -------------------- Plan (safe; no lock/refresh) --------------------
       - name: Terraform plan (safe for PRs)
         env:
