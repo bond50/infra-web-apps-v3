@@ -1,7 +1,7 @@
 ###############################################################
 # 05 - PR Quality Gate (fmt → validate → TFLint → Checkov → Plan)
 # Purpose:
-#  - Fast feedback for *pull requests* (no apply).
+#  - Fast feedback for *pull requests* only (no apply here).
 #  - Uses OIDC to read AWS (no long-lived keys).
 #  - Uploads a Terraform plan artifact for reviewers.
 # Notes:
@@ -9,40 +9,36 @@
 #    AWS_REGION, AWS_ROLE_ARN, TF_STATE_BUCKET, TF_STATE_TABLE, TF_STATE_KEY
 ###############################################################
 
-name: 05 - PR Quality Gate # Name seen in Actions UI
+name: 05 - PR Quality Gate # Human-readable workflow name in Actions UI
 
-on: # ───────── Triggers for this workflow ─────────
-    pull_request: # Run on PR events only (opened, synchronize, etc.)
-        branches: # ← ENFORCES: which *target* branches allow this workflow
-            - develop #    run when PR targets develop (normal dev flow)
-            - main #    run when PR targets main (e.g., hotfix or final release)
-            - release/* #    run when PR targets any release/* branch
-            - hotfix/* #    run when PR targets any hotfix/* branch
+on: # ─────────────── Triggers for this workflow ───────────────
+    pull_request: # Run when a Pull Request is opened/synchronized/etc.
+        branches: ["**"] # ← ENFORCES: run on PRs targeting *any* branch (all patterns)
 
-permissions: # ───────── Token permissions ─────────
-    id-token: write # OIDC → AWS STS
-    contents: read # Read code
-    pull-requests: write # (Optional) comment/annotate PRs
+permissions: # ───────────── GitHub token permissions for this workflow ─────────────
+    id-token: write # Needed for GitHub OIDC → AWS STS:AssumeRole
+    contents: read # Read source code
+    pull-requests: write # (Optional) allow annotations/comments on PRs
 
-concurrency: # ───────── Avoid duplicate PR runs ─────────
-    group: pr-quality-${{ github.event.pull_request.number }}
-    cancel-in-progress: true
+concurrency: # ─────────────── Prevent duplicate runs per PR ───────────────
+    group: pr-quality-${{ github.event.pull_request.number }} # Unique key per PR number
+    cancel-in-progress: true # Cancel older runs if a new commit arrives
 
-jobs:
-    pr-quality:
-        runs-on: ubuntu-latest
+jobs: # ─────────────── Jobs in this workflow ───────────────
+    pr-quality: # Single job for the PR gate
+        runs-on: ubuntu-latest # Use the hosted Ubuntu runner
 
-        steps:
-            - name: Checkout repo
-              uses: actions/checkout@v5 # Stable latest major
+        steps: # ─────────────── Steps (executed in order) ───────────────
+            - name: Checkout repo # Fetch the repository contents
+              uses: actions/checkout@v5 # Latest stable major of checkout action
 
             ###############################################################
             # Preflight — verify Variables
             ###############################################################
-            - name: Preflight — verify Variables
+            - name: Preflight — verify Variables # Fail early if required repo Variables are missing/invalid
               shell: bash
               run: |
-                  set -eu
+                  set -eu                                  # Exit on errors or undefined variables
                   [ -n "${{ vars.AWS_REGION }}" ] || { echo "Missing variable: AWS_REGION"; exit 1; }
                   [ -n "${{ vars.AWS_ROLE_ARN }}" ] || { echo "Missing variable: AWS_ROLE_ARN"; exit 1; }
                   [ -n "${{ vars.TF_STATE_BUCKET }}" ] || { echo "Missing variable: TF_STATE_BUCKET"; exit 1; }
@@ -53,20 +49,22 @@ jobs:
                   fi
                   echo "Preflight OK."
 
-            - name: Setup Terraform
-              uses: hashicorp/setup-terraform@v3
+            - name: Setup Terraform # Install Terraform CLI
+              uses: hashicorp/setup-terraform@v3 # Official HashiCorp setup action (v3.x is current major)
               with:
-                  terraform_version: 1.13.3 # Latest stable TF
+                  terraform_version: 1.13.3 # Pin to current stable Terraform CLI
 
-            - name: Configure AWS credentials (OIDC)
+            - name: Configure AWS credentials (OIDC) # Authenticate to AWS using OIDC (no static credentials)
               uses: aws-actions/configure-aws-credentials@v5
               with:
-                  role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-                  aws-region: ${{ vars.AWS_REGION }}
-                  role-session-name: gha-pr-${{ github.run_id }}
+                  role-to-assume: ${{ vars.AWS_ROLE_ARN }} # IAM Role ARN populated by bootstrap
+                  aws-region: ${{ vars.AWS_REGION }} # AWS Region to use
+                  role-session-name: gha-pr-${{ github.run_id }} # Unique STS session name
 
             - name: Terraform Init (S3 backend via Variables; no lock/refresh during PR)
               run: |
+                  # Initialize the S3 backend using values from repo Variables.
+                  # Note: keep comments on separate lines to avoid "\" parsing issues.
                   terraform init -input=false \
                     -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
                     -backend-config="key=${{ vars.TF_STATE_KEY }}" \
@@ -77,23 +75,23 @@ jobs:
             ###############################################################
             # FMT + VALIDATE
             ###############################################################
-            - name: Terraform fmt (check only)
+            - name: Terraform fmt (check only) # Enforce canonical formatting; fails if changes needed
               run: terraform fmt -check -recursive
 
-            - name: Terraform validate
+            - name: Terraform validate # Validate HCL structure & provider config
               env:
-                  TF_VAR_region: ${{ vars.AWS_REGION }}
+                  TF_VAR_region: ${{ vars.AWS_REGION }} # Example variable wiring (if your code expects it)
               run: terraform validate
 
             ###############################################################
             # TFLint (best-practice lints for AWS/Terraform)
             ###############################################################
-            - name: Setup TFLint
-              uses: terraform-linters/setup-tflint@v5
+            - name: Setup TFLint # Install TFLint CLI via official setup action
+              uses: terraform-linters/setup-tflint@v5 # Latest major of the setup action
               with:
-                  tflint_version: v0.59.1
+                  tflint_version: v0.59.1 # Current TFLint release
 
-            - name: TFLint init & run
+            - name: TFLint init & run # Initialize plugins (per .tflint.hcl) and lint
               run: |
                   tflint --init
                   tflint -f compact
@@ -101,27 +99,27 @@ jobs:
             ###############################################################
             # Checkov (policy/security scan for Terraform)
             ###############################################################
-            - name: Setup Python
+            - name: Setup Python # Python runtime for installing/running Checkov
               uses: actions/setup-python@v6
               with:
-                  python-version: "3.13"
+                  python-version: "3.13" # Current stable Python 3 line
 
-            - name: Install Checkov
-              run: pip install --quiet "checkov==3.2.474"
+            - name: Install Checkov # Install IaC security scanner
+              run: pip install --quiet "checkov==3.2.474" # Pin Checkov to a known good version
 
-            - name: Checkov scan (fail on findings)
+            - name: Checkov scan (fail on findings) # Fail the job if misconfigurations are detected
               run: checkov -d . --framework terraform
 
             ###############################################################
             # PLAN (no lock, no refresh) + upload artifact for reviewers
             ###############################################################
-            - name: Terraform plan (safe for PRs)
+            - name: Terraform plan (safe for PRs) # Create a plan without locking/refreshing shared state
               env:
-                  TF_VAR_region: ${{ vars.AWS_REGION }}
+                  TF_VAR_region: ${{ vars.AWS_REGION }} # Pass region into your configs if needed
               run: terraform plan -input=false -no-color -lock=false -refresh=false -out=tfplan.bin
 
-            - name: Upload plan artifact
+            - name: Upload plan artifact # Attach the plan to the PR as a downloadable artifact
               uses: actions/upload-artifact@v4
               with:
-                  name: tfplan-pr-${{ github.event.pull_request.number }}
-                  path: tfplan.bin
+                  name: tfplan-pr-${{ github.event.pull_request.number }} # Unique artifact name per PR
+                  path: tfplan.bin # Path to the saved plan
