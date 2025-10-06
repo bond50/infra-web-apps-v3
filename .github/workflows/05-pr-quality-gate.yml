@@ -8,28 +8,28 @@
 #  - Uses repo Variables created by bootstrap:
 #    AWS_REGION, AWS_ROLE_ARN, TF_STATE_BUCKET, TF_STATE_TABLE, TF_STATE_KEY
 ###############################################################
-name: 05 - PR Quality Gate  # ← Name visible in Actions UI
+name: 05 - PR Quality Gate # ← Name visible in Actions UI
 
 on:
-  pull_request:            # ← Trigger on any PR
-    branches: ["**"]       # ← PRs targeting any branch (develop, main, release/*, hotfix/*)
+  pull_request: # ← Trigger on any PR
+    branches: ["**"] # ← PRs targeting any branch (develop, main, release/*, hotfix/*)
 
 permissions:
-  id-token: write          # ← Required for OIDC to AWS (sts:AssumeRoleWithWebIdentity)
-  contents: read           # ← Needed to checkout code
-  pull-requests: write     # ← (Optional) for PR annotations/comments
+  id-token: write # ← Required for OIDC to AWS (sts:AssumeRoleWithWebIdentity)
+  contents: read # ← Needed to checkout code
+  pull-requests: write # ← (Optional) for PR annotations/comments
 
 concurrency:
-  group: pr-quality-${{ github.event.pull_request.number }}  # ← One run per PR number
-  cancel-in-progress: true                                   # ← Cancel older run on new push to same PR
+  group: pr-quality-${{ github.event.pull_request.number }} # ← One run per PR number
+  cancel-in-progress: true # ← Cancel older run on new push to same PR
 
 jobs:
-  pr-quality:                  # ← Single job for PR gate
-    runs-on: ubuntu-latest     # ← GitHub-hosted Linux runner
+  pr-quality: # ← Single job for PR gate
+    runs-on: ubuntu-latest # ← GitHub-hosted Linux runner
 
     steps:
       - name: Checkout repository code
-        uses: actions/checkout@v5   # ← Stable major; keeps runner up-to-date
+        uses: actions/checkout@v5 # ← Stable major; keeps runner up-to-date
 
       ###############################################################
       # Preflight — verify Variables exist & region format is valid
@@ -53,14 +53,14 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.13.3    # ← Pinned Terraform CLI
+          terraform_version: 1.13.3 # ← Pinned Terraform CLI
 
       # Configure AWS credentials (OIDC) — read-only for planning/linting
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v5
         with:
-          role-to-assume:   ${{ vars.AWS_ROLE_ARN }}  # ← Role created by bootstrap
-          aws-region:       ${{ vars.AWS_REGION }}    # ← Region as variable
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }} # ← Role created by bootstrap
+          aws-region: ${{ vars.AWS_REGION }} # ← Region as variable
           role-session-name: gha-pr-${{ github.run_id }}
 
       # Initialize Terraform with remote backend (no lock/refresh during PR)
@@ -72,11 +72,11 @@ jobs:
       # FMT + VALIDATE
       ###############################################################
       - name: Terraform fmt (check only)
-        run: terraform fmt -check -recursive   # ← Fail if formatting drift
+        run: terraform fmt -check -recursive # ← Fail if formatting drift
 
       - name: Terraform validate
         env:
-          TF_VAR_region: ${{ vars.AWS_REGION }}  # ← If your modules expect var.region
+          TF_VAR_region: ${{ vars.AWS_REGION }} # ← If your modules expect var.region
         run: terraform validate
 
       ###############################################################
@@ -85,7 +85,7 @@ jobs:
       - name: Setup TFLint
         uses: terraform-linters/setup-tflint@v5
         with:
-          tflint_version: v0.59.1              # ← Pinned TFLint CLI
+          tflint_version: v0.59.1 # ← Pinned TFLint CLI
 
       - name: TFLint init & run
         run: |
@@ -98,13 +98,18 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.13"               # ← Pinned Python
+          python-version: "3.13" # ← Pinned Python
 
       - name: Install Checkov
-        run: pip install --quiet "checkov==3.2.474"  # ← Pinned Checkov
+        run: pip install --quiet "checkov==3.2.474" # ← Pinned Checkov
 
       - name: Checkov scan (fail on findings)
-        run: checkov -d . --framework terraform
+        uses: bridgecrewio/checkov-action@v12 # official action; handles flags correctly
+        with:
+          directory: . # scan repo root
+          framework: terraform # only Terraform
+          soft_fail: false # fail the job on findings
+          quiet: true
 
       ###############################################################
       # PLAN (no lock, no refresh) and upload artifact for reviewers
@@ -117,6 +122,6 @@ jobs:
       - name: Upload plan artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tfplan-pr-${{ github.event.pull_request.number }}  # ← Unique per PR
-          path: tfplan.bin                                         # ← Binary plan file
-          retention-days: 7                                        # ← Keep for a week
+          name: tfplan-pr-${{ github.event.pull_request.number }} # ← Unique per PR
+          path: tfplan.bin # ← Binary plan file
+          retention-days: 7 # ← Keep for a week
