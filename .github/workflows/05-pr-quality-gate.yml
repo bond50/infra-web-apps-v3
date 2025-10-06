@@ -94,26 +94,32 @@ jobs:
 
       ###############################################################
       # Checkov (policy/security scan for Terraform)
+
+      ###############################################################
+      # PLAN (no lock, no refresh) and upload artifact for reviewers
+      # Run the CLI directly to avoid the soft_fail arg issue.
       ###############################################################
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.13" # ← Pinned Python
+          python-version: "3.13" # pinned Python
 
       - name: Install Checkov
-        run: pip install --quiet "checkov==3.2.474" # ← Pinned Checkov
+        run: pip install --quiet "checkov==3.2.474" # pinned Checkov
 
       - name: Checkov scan (fail on findings)
-        uses: bridgecrewio/checkov-action@v12 # official action; handles flags correctly
-        with:
-          directory: . # scan repo root
-          framework: terraform # only Terraform
-          soft_fail: false # fail the job on findings
-          quiet: true
+        run: |
+          mkdir -p reports
+          checkov -d . --framework terraform --quiet \
+            --output sarif --output-file-path reports/checkov.sarif
 
-      ###############################################################
-      # PLAN (no lock, no refresh) and upload artifact for reviewers
-      ###############################################################
+      - name: Upload Checkov SARIF (artifact for review)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkov-sarif
+          path: reports/checkov.sarif
+
       - name: Terraform plan (safe for PRs)
         env:
           TF_VAR_region: ${{ vars.AWS_REGION }}
