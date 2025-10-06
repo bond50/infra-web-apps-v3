@@ -1,108 +1,97 @@
 ###############################################################
 # 10 - Terraform (plan on branches, apply on main)
 # Purpose:
-#  - Plan on pushes to feature/*, develop, release/*, hotfix/*, and main.
-#  - Also plan on PRs into develop/main/release/*/hotfix/*.
-#  - Apply runs *only* on pushes to main (gated by environment).
-#  - Uses OIDC for AWS (no static keys).
+#  - Runs plan on *any* branch/PR.
+#  - Runs *apply* only on pushes to the main branch (guarded).
+#  - Uses OIDC for AWS (no static credentials).
+#  - Optionally gate apply with a protected Environment (“production”).
 ###############################################################
 
-name: 10 - Terraform (plan on branches, apply on main)
+name: 10 - Terraform (plan on branches, apply on main) # Name in Actions UI
 
-on: # ───────── Triggers ─────────
-  push: # Run on pushes to these branches:
-    branches:
-      - main # ← ENFORCES: include main pushes (needed for apply)
-      - develop # ← ENFORCES: plan on pushes to develop
-      - feature/* # ← ENFORCES: plan on pushes to any feature/*
-      - release/* # ← ENFORCES: plan on pushes to any release/*
-      - hotfix/* # ← ENFORCES: plan on pushes to any hotfix/*
-  pull_request: # Run on PRs targeting these branches:
-    branches:
-      - develop # ← ENFORCES: PRs into develop trigger this workflow
-      - main # ← ENFORCES: PRs into main trigger this workflow
-      - release/* # ← ENFORCES: PRs into any release/*
-      - hotfix/* # ← ENFORCES: PRs into any hotfix/*
+on: # ─────────────── Triggers ───────────────
+  push: # Run on push events…
+    branches: ["**"] # …to any branch (feature/*, main, etc.)
+  pull_request: # Run on pull request events…
+    branches: ["**"] # …targeting any branch
 
-permissions:
-  id-token: write
-  contents: read
+permissions: # ─────────────── Token permissions ───────────────
+  id-token: write # OIDC to AWS
+  contents: read # Read repository
 
-concurrency:
-  group: terraform-${{ github.ref_name }} # One run per branch
-  cancel-in-progress: true
+concurrency: # ─────────────── Avoid overlapping runs per branch ───────────────
+  group: terraform-${{ github.ref_name }} # One run per branch name at a time
+  cancel-in-progress: true # Cancel older run if a new push happens
 
 jobs:
-  tf:
-    runs-on: ubuntu-latest
+  tf: # Single job
+    runs-on: ubuntu-latest # Hosted runner
 
-    # Apply is gated by a protected Environment named "production".
-    # Only set that environment when the event is a *push to main*.
+    # Apply is gated by a GitHub Environment named "production".
+    # This expression only sets the environment when it's a PUSH to main.
     environment: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && 'production' || '' }}
     #                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    #                                  └─ ENFORCES: environment gates APPLY only for pushes to main
+    #                                  └─ ENFORCES: set environment ONLY for *pushes to main* (helps gate apply)
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v5
+      - name: Checkout repo # Get the code
+        uses: actions/checkout@v5 # Latest stable major
 
-      - name: Preflight — verify Variables (OIDC mode)
+      - name: Preflight — verify Variables (OIDC mode) # Sanity checks for required Variables
         shell: bash
         run: |
           set -eu
-          [ -n "${{ vars.AWS_REGION }}" ]      || { echo "Missing variable: AWS_REGION"; exit 1; }
-          [ -n "${{ vars.AWS_ROLE_ARN }}" ]    || { echo "Missing variable: AWS_ROLE_ARN"; exit 1; }
+          [ -n "${{ vars.AWS_REGION }}" ] || { echo "Missing variable: AWS_REGION"; exit 1; }
+          [ -n "${{ vars.AWS_ROLE_ARN }}" ] || { echo "Missing variable: AWS_ROLE_ARN"; exit 1; }
           [ -n "${{ vars.TF_STATE_BUCKET }}" ] || { echo "Missing variable: TF_STATE_BUCKET"; exit 1; }
           [ -n "${{ vars.TF_STATE_TABLE }}" ] || { echo "Missing variable: TF_STATE_TABLE"; exit 1; }
           [ -n "${{ vars.TF_STATE_KEY }}" ] || { echo "Missing variable: TF_STATE_KEY"; exit 1; }
           if [[ ! "${{ vars.AWS_REGION }}" =~ ^[a-z]+-[a-z]+-[0-9]+$ ]]; then
             echo "Invalid AWS_REGION: '${{ vars.AWS_REGION }}'"; exit 1
-            echo "Invalid AWS_REGION: '${{ vars.AWS_REGION }}'"; exit 1
           fi
           echo "Preflight OK."
 
-      - name: Setup Terraform
+      - name: Setup Terraform # Install Terraform CLI
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.13.3
+          terraform_version: 1.13.3 # Current stable Terraform
 
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v5
+      - name: Configure AWS credentials (OIDC) # Assume the CI role in AWS
         uses: aws-actions/configure-aws-credentials@v5
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-          role-session-name: gha-tf-${{ github.run_id }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }} # Role created by bootstrap
+          aws-region: ${{ vars.AWS_REGION }} # Region
+          role-session-name: gha-tf-${{ github.run_id }}# Unique STS session
 
-      - name: Sanity — whoami
+      - name: Sanity — whoami # Quick identity check (handy in logs)
         run: aws sts get-caller-identity
 
-      - name: Terraform Init (S3 backend only) + Workspace
-        shell: bash
+      - name: Terraform Init (S3 backend via Variables) # Initialize remote backend (S3 + DynamoDB)
         run: |
-          terraform init -input=false             -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"             -backend-config="key=${{ vars.TF_STATE_KEY }}"             -backend-config="region=${{ vars.AWS_REGION }}"             -backend-config="dynamodb_table=${{ vars.TF_STATE_TABLE }}"             -backend-config="encrypt=true"
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ vars.TF_STATE_KEY }}" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_STATE_TABLE }}" \
+            -backend-config="encrypt=true"
 
-          terraform workspace list || true
-          terraform workspace select "$WS" || terraform workspace new "$WS"
-
-      - name: Terraform fmt & validate & plan
+      - name: Terraform Validate & Plan # Format, validate, and produce a plan
         env:
-          TF_VAR_region: ${{ vars.AWS_REGION }}
+          TF_VAR_region: ${{ vars.AWS_REGION }} # Example var passthrough
         run: |
           terraform fmt -check
           terraform validate
-          terraform plan -input=false -no-color -lock=false -out=tfplan.bin
+          terraform plan -input=false -no-color -out=tfplan.bin
 
-      - name: Upload plan artifact (for non-main branches)
-        if: github.ref != 'refs/heads/main' # ← ENFORCES: skip artifact upload on main
+      - name: Upload plan artifact (for non-main branches) # For review on PRs/feature branches
+        if: github.ref != 'refs/heads/main' # ← ENFORCES: only upload on *non-main* branches
         uses: actions/upload-artifact@v4
         with:
           name: tfplan
           path: tfplan.bin
-          retention-days: 7
 
-      - name: Terraform Apply (only on main; gated by environment)
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push' # ← ENFORCES: APPLY ONLY on pushes to main
+      - name: Terraform Apply (only on main; gated by environment) # The one and only Apply step
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push' # ← ENFORCES: APPLY ONLY on *pushes to main*
         env:
-          TF_VAR_region: ${{ vars.AWS_REGION }}
-        run: terraform apply -input=false -auto-approve -lock=false tfplan.bin
+          TF_VAR_region: ${{ vars.AWS_REGION }} # Example var passthrough
+        run: terraform apply -input=false -auto-approve tfplan.bin
