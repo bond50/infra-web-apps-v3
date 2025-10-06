@@ -2,34 +2,37 @@
 # 05 - PR Quality Gate (fmt → validate → TFLint → Checkov → Plan)
 # Purpose:
 #  - Fast feedback on pull_requests.
-#  - Runs with OIDC (read-only; no apply).
-#  - Uploads plan as artifact for reviewers.
+#  - Uses OIDC to assume AWS role (read-only; never applies).
+#  - Uploads tfplan + Checkov SARIF as artifacts for review.
 # Notes:
-#  - Uses repo Variables created by bootstrap:
+#  - Requires repo Variables from bootstrap:
 #    AWS_REGION, AWS_ROLE_ARN, TF_STATE_BUCKET, TF_STATE_TABLE, TF_STATE_KEY
 ###############################################################
-name: 05 - PR Quality Gate # ← Name visible in Actions UI
+name: 05 - PR Quality Gate
 
 on:
-  pull_request: # ← Trigger on any PR
-    branches: ["**"] # ← PRs targeting any branch (develop, main, release/*, hotfix/*)
+  pull_request: # ← run on any PR to any target branch
+    branches: ["**"]
 
 permissions:
-  id-token: write # ← Required for OIDC to AWS (sts:AssumeRoleWithWebIdentity)
-  contents: read # ← Needed to checkout code
-  pull-requests: write # ← (Optional) for PR annotations/comments
+  id-token: write # ← needed for AWS OIDC (sts:AssumeRoleWithWebIdentity)
+  contents: read # ← checkout the repo
+  pull-requests: write # ← (optional) allow PR annotations/comments
 
 concurrency:
-  group: pr-quality-${{ github.event.pull_request.number }} # ← One run per PR number
-  cancel-in-progress: true # ← Cancel older run on new push to same PR
+  group: pr-quality-${{ github.event.pull_request.number }} # ← one run per PR
+  cancel-in-progress: true # ← cancel older run on new push
 
 jobs:
-  pr-quality: # ← Single job for PR gate
+  pr-quality:
     runs-on: ubuntu-latest # ← GitHub-hosted Linux runner
 
     steps:
+      ###############################################################
+      # Checkout source
+      ###############################################################
       - name: Checkout repository code
-        uses: actions/checkout@v5 # ← Stable major; keeps runner up-to-date
+        uses: actions/checkout@v5 # ← stable major
 
       ###############################################################
       # Preflight — verify Variables exist & region format is valid
@@ -49,63 +52,66 @@ jobs:
           fi
           echo "Preflight OK."
 
-      # Install a specific Terraform CLI version (pin for reproducibility)
+      ###############################################################
+      # Terraform CLI + AWS OIDC
+      ###############################################################
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.13.3 # ← Pinned Terraform CLI
+          terraform_version: 1.13.3 # ← pinned TF CLI
 
-      # Configure AWS credentials (OIDC) — read-only for planning/linting
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v5
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }} # ← Role created by bootstrap
-          aws-region: ${{ vars.AWS_REGION }} # ← Region as variable
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }} # ← role created by bootstrap
+          aws-region: ${{ vars.AWS_REGION }} # ← region as variable
           role-session-name: gha-pr-${{ github.run_id }}
 
-      # Initialize Terraform with remote backend (no lock/refresh during PR)
       - name: Terraform Init (S3 backend via Variables; no lock/refresh during PR)
         run: |
-          terraform init -input=false             -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"             -backend-config="key=${{ vars.TF_STATE_KEY }}"             -backend-config="region=${{ vars.AWS_REGION }}"             -backend-config="dynamodb_table=${{ vars.TF_STATE_TABLE }}"             -backend-config="encrypt=true"
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ vars.TF_STATE_KEY }}" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_STATE_TABLE }}" \
+            -backend-config="encrypt=true"
 
       ###############################################################
       # FMT + VALIDATE
       ###############################################################
       - name: Terraform fmt (check only)
-        run: terraform fmt -check -recursive # ← Fail if formatting drift
+        run: terraform fmt -check -recursive # ← fail if formatting drift
 
       - name: Terraform validate
         env:
-          TF_VAR_region: ${{ vars.AWS_REGION }} # ← If your modules expect var.region
+          TF_VAR_region: ${{ vars.AWS_REGION }} # ← if your modules expect var.region
         run: terraform validate
 
       ###############################################################
-      # TFLint (best-practice lints for TF & AWS; plugins in .tflint.hcl)
+      # TFLint (Terraform + AWS best-practice checks)
       ###############################################################
       - name: Setup TFLint
         uses: terraform-linters/setup-tflint@v5
         with:
-          tflint_version: v0.59.1 # ← Pinned TFLint CLI
+          tflint_version: v0.59.1 # ← pinned TFLint CLI
 
       - name: TFLint init & run
         run: |
-          tflint --init                        # ← Downloads pinned plugins from .tflint.hcl
-          tflint -f compact                    # ← Lint with compact output
+          tflint --init                # ← download plugins per .tflint.hcl
+          tflint -f compact            # ← lint with compact output
 
       ###############################################################
-      # Checkov (policy/security scan for Terraform)
-
-      ###############################################################
-      # PLAN (no lock, no refresh) and upload artifact for reviewers
-      # Run the CLI directly to avoid the soft_fail arg issue.
+      # Checkov (policy/security scan for Terraform) — CLI ONLY
+      # We run the CLI directly (not the action) to avoid the
+      # '--soft_fail' arg issue. Fails the job on findings.
       ###############################################################
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.13" # pinned Python
+          python-version: "3.13" # ← pinned Python for Checkov
 
       - name: Install Checkov
-        run: pip install --quiet "checkov==3.2.474" # pinned Checkov
+        run: pip install --quiet "checkov==3.2.474" # ← pinned Checkov
 
       - name: Checkov scan (fail on findings)
         run: |
@@ -113,13 +119,16 @@ jobs:
           checkov -d . --framework terraform --quiet \
             --output sarif --output-file-path reports/checkov.sarif
 
-      - name: Upload Checkov SARIF (artifact for review)
-        if: always()
+      - name: Upload Checkov SARIF (artifact)
+        if: always() # ← keep report even if scan fails
         uses: actions/upload-artifact@v4
         with:
           name: checkov-sarif
           path: reports/checkov.sarif
 
+      ###############################################################
+      # PLAN (no lock, no refresh) + upload artifact for reviewers
+      ###############################################################
       - name: Terraform plan (safe for PRs)
         env:
           TF_VAR_region: ${{ vars.AWS_REGION }}
@@ -128,6 +137,6 @@ jobs:
       - name: Upload plan artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tfplan-pr-${{ github.event.pull_request.number }} # ← Unique per PR
-          path: tfplan.bin # ← Binary plan file
-          retention-days: 7 # ← Keep for a week
+          name: tfplan-pr-${{ github.event.pull_request.number }} # ← unique per PR
+          path: tfplan.bin
+          retention-days: 7
