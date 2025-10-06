@@ -12,7 +12,7 @@ name: 05 - PR Quality Gate
 
 on:
   pull_request: # run on any PR
-    branches: ["**"] # PRs targeting any branch
+    branches: ["**"] # PRs targeting any branch (develop, main, release/*, hotfix/*)
 
 permissions:
   id-token: write # OIDC to AWS
@@ -25,11 +25,11 @@ concurrency:
 
 jobs:
   pr-quality:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest # GH runner (has docker preinstalled)
 
     steps:
       - name: Checkout repository code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v5 # get the source
 
       ###############################################################
       # Preflight — verify Variables exist & region format is valid
@@ -96,11 +96,11 @@ jobs:
         run: |
           tflint --init
           tflint -f compact
-        ###############################################################
-        # Checkov (policy/security scan for Terraform) — run via Docker
-        # NOTE: Docker is available on GitHub's ubuntu-latest runner.
-        # This avoids the action wrapper bug that adds --soft_fail=False.
-        ###############################################################
+
+      ###############################################################
+      # Checkov (policy/security scan for Terraform) — via Docker
+      # NOTE: Docker is available on GH runners; this avoids wrapper bugs
+      ###############################################################
       - name: Checkov scan (Docker; fail on findings)
         run: |
           docker run --rm \
