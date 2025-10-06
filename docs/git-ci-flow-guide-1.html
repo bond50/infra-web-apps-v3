@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Git &amp; CI Flow — develop · feature/* · release/* · hotfix/*</title>
+<style>
+  :root {
+    --bg: #0b0f14;
+    --panel: #10161c;
+    --ink: #e6edf3;
+    --muted: #94a3b8;
+    --accent: #41b883;
+    --accent-2: #4ea1ff;
+    --red: #ff6b6b;
+    --code-bg: #0f1720;
+    --kbd-bg: #111827;
+    --kbd-ink: #e5e7eb;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font: 16px/1.6 system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji"; }
+  a { color: var(--accent-2); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  main { max-width: 1100px; margin: 0 auto; padding: 28px 18px 64px; }
+  header {
+    background: linear-gradient(180deg, rgba(78,161,255,.12), rgba(65,184,131,.05));
+    border: 1px solid rgba(148,163,184,.18);
+    padding: 18px 20px; border-radius: 14px; margin-bottom: 22px;
+  }
+  h1 { font-size: 1.8rem; margin: 0 0 6px; letter-spacing: .2px; }
+  h2 { font-size: 1.35rem; margin-top: 28px; border-left: 4px solid var(--accent); padding-left: 10px; }
+  h3 { font-size: 1.05rem; margin-top: 18px; color: var(--accent-2); }
+  p.lead { color: var(--muted); margin: 0; }
+  .panel { background: var(--panel); border: 1px solid rgba(148,163,184,.16); border-radius: 12px; padding: 16px; margin: 14px 0; }
+  .checklist li { margin: .35rem 0; }
+  code, pre { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid rgba(148,163,184,.12);
+    border-radius: 10px;
+    padding: 12px 14px;
+    overflow: auto;
+  }
+  .kbd { background: var(--kbd-bg); color: var(--kbd-ink); border: 1px solid rgba(148,163,184,.24); border-bottom-width: 3px; border-radius: 6px; padding: 1px 6px; font-weight: 600; }
+  .toc { columns: 2; gap: 22px; }
+  .toc a { display:block; padding: 4px 0; color: var(--ink); }
+  .hint { color: var(--muted); font-size: .95rem; }
+  .callout { border-left: 4px solid var(--accent-2); padding-left: 10px; }
+  .ok { color: var(--accent); }
+  .warn { color: #fbbf24; }
+  .err { color: var(--red); }
+  footer { margin-top: 36px; color: var(--muted); font-size: .9rem; text-align: center; }
+  @media print {
+    body { background: #fff; color: #000; }
+    header, .panel, pre { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .toc { columns: 1; }
+    a { color: #0645ad; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Git &amp; CI Flow — Everyday Work, Releases, Hotfixes</h1>
+    <p class="lead">Branches: <strong>main</strong> (production), <strong>develop</strong> (integration), <strong>feature/*</strong>, <strong>release/*</strong>, <strong>hotfix/*</strong>. CI: <em>05 - PR Quality Gate</em> (PRs), <em>10 - Terraform</em> (apply on main).</p>
+  </header>
+
+  <div class="panel">
+    <h3>Quick Table of Contents</h3>
+    <nav class="toc">
+      <a href="#everyday">Everyday work (features)</a>
+      <a href="#release">Shipping to production (release)</a>
+      <a href="#hotfix">Urgent production fix (hotfix)</a>
+      <a href="#workflows">What each workflow does</a>
+      <a href="#decisions">Quick decision guide</a>
+      <a href="#gotchas">Common gotchas &amp; quick fixes</a>
+    </nav>
+  </div>
+
+  <section id="everyday">
+    <h2>Everyday work (features) — <code>develop → feature/* → PR → develop</code></h2>
+    <p>This is your default path for any non-urgent work.</p>
+
+    <h3>Start clean on <code>develop</code></h3>
+<pre><code># be anywhere
+git switch develop
+git pull --rebase   # update local develop from origin</code></pre>
+
+    <h3>Create a feature branch off <code>develop</code></h3>
+<pre><code>git switch -c feature/my-change</code></pre>
+    <p class="hint">Use short, descriptive names: <code>feature/sg-rules</code>, <code>feature/ecr-cleanup</code>, etc.</p>
+
+    <h3>Edit files → stage → commit</h3>
+<pre><code>git add &lt;files...&gt;
+git commit -m "feat: short description of the change"
+# If your local hook blocks you (missing pre-commit), bypass ONCE:
+# git commit -m "feat: ..." --no-verify</code></pre>
+
+    <h3>Push the feature branch</h3>
+<pre><code>git push -u origin feature/my-change</code></pre>
+
+    <h3>Open a PR to <code>develop</code></h3>
+    <ul class="checklist">
+      <li><strong>Base:</strong> <code>develop</code></li>
+      <li><strong>Compare:</strong> <code>feature/my-change</code></li>
+    </ul>
+
+    <div class="panel callout">
+      <p><strong>What CI does automatically on the PR:</strong></p>
+      <ul>
+        <li>Runs <em>05 - PR Quality Gate</em> → <code>fmt</code> → <code>validate</code> → <code>tflint</code> → <code>checkov</code> → <em>safe</em> <code>terraform plan</code> (no state lock/refresh).</li>
+        <li>If anything fails, fix locally, commit, and push to the same feature branch. CI re-runs.</li>
+      </ul>
+    </div>
+
+    <h3>Merge to <code>develop</code> (Squash recommended)</h3>
+    <p>When the PR is green (and approvals met), click <span class="kbd">Squash and merge</span>.</p>
+
+    <h3>Sync your local <code>develop</code></h3>
+<pre><code>git switch develop
+git pull --rebase</code></pre>
+
+    <p><em>That’s it. Your change is now integrated. It’s <span class="warn">not</span> in production yet; that happens during a release.</em></p>
+  </section>
+
+  <section id="release">
+    <h2>Shipping to production — <code>release/* → PR → main → apply</code></h2>
+    <p>Use this when <code>develop</code> has a set of changes ready to go live.</p>
+
+    <h3>Cut a release branch from <code>develop</code></h3>
+<pre><code>git switch develop
+git pull --rebase
+git switch -c release/v0.1.0
+git push -u origin release/v0.1.0</code></pre>
+
+    <h3>Open a PR to <code>main</code></h3>
+    <ul class="checklist">
+      <li><strong>Base:</strong> <code>main</code></li>
+      <li><strong>Compare:</strong> <code>release/v0.1.0</code></li>
+    </ul>
+
+    <div class="panel callout">
+      <p><strong>What CI does on the PR:</strong></p>
+      <ul>
+        <li>Runs <em>05 - PR Quality Gate</em> (fmt/validate/tflint/checkov/plan).</li>
+      </ul>
+    </div>
+
+    <h3>Merge to <code>main</code> (Squash)</h3>
+    <p>When green, merge the PR into <code>main</code>.</p>
+
+    <div class="panel callout">
+      <p><strong>What CI does on push to <code>main</code>:</strong></p>
+      <ul>
+        <li>Runs <em>10 - Terraform (plan on branches, apply on main)</em></li>
+        <li>Because it’s <code>main</code>, the job will <strong class="ok">apply</strong> (and respects your <strong>production</strong> environment reviewers if configured).</li>
+      </ul>
+    </div>
+
+    <h3>Back-merge <code>main</code> into <code>develop</code> (keep branches in sync)</h3>
+<pre><code>git switch develop
+git pull --rebase
+git merge --no-ff origin/main
+git push</code></pre>
+    <p class="hint">If your rules require PRs for <code>develop</code>, open a quick PR <code>main → develop</code> instead of merging locally.</p>
+  </section>
+
+  <section id="hotfix">
+    <h2>Urgent production fix — <code>hotfix/* → PR → main → apply → back-merge</code></h2>
+    <p>For break/fix when production is broken.</p>
+
+    <h3>Branch from <code>main</code></h3>
+<pre><code>git switch main
+git pull --rebase
+git switch -c hotfix/fix-bug</code></pre>
+
+    <h3>Edit → commit → push</h3>
+<pre><code>git add &lt;files...&gt;
+git commit -m "fix: critical production issue"
+git push -u origin hotfix/fix-bug</code></pre>
+
+    <h3>Open a PR to <code>main</code></h3>
+    <ul class="checklist">
+      <li><strong>Base:</strong> <code>main</code></li>
+      <li><strong>Compare:</strong> <code>hotfix/fix-bug</code></li>
+    </ul>
+
+    <div class="panel callout">
+      <p><strong>PR CI:</strong> <em>05 - PR Quality Gate</em> runs (fmt/validate/tflint/checkov/plan).</p>
+    </div>
+
+    <h3>Merge to <code>main</code> → Apply runs</h3>
+    <p>After merge, <em>10 - Terraform …</em> <strong class="ok">applies</strong> (gated by environment if configured).</p>
+
+    <h3>Back-merge <code>main</code> → <code>develop</code></h3>
+<pre><code>git switch develop
+git pull --rebase
+git merge --no-ff origin/main
+git push</code></pre>
+  </section>
+
+  <section id="workflows">
+    <h2>What each workflow does (so you know what to expect)</h2>
+    <ul>
+      <li><strong>05 - PR Quality Gate</strong> (runs on PRs):
+        <ul>
+          <li>Ensures formatting, syntax, best practices, and security policies.</li>
+          <li>Runs a safe <code>terraform plan</code> and uploads <code>tfplan.bin</code> as a PR artifact.</li>
+          <li><em>Never</em> applies.</li>
+        </ul>
+      </li>
+      <li><strong>10 - Terraform (plan on branches, apply on main)</strong>:
+        <ul>
+          <li>On pushes to branches (e.g., <code>develop</code>) → <strong>plan only</strong>.</li>
+          <li>On pushes to <code>main</code> → <strong>apply</strong> (uses your OIDC role; respects <strong>production</strong> environment reviewers if enabled).</li>
+        </ul>
+      </li>
+    </ul>
+  </section>
+
+  <section id="decisions">
+    <h2>Quick decision guide</h2>
+    <ul class="checklist">
+      <li><strong>New work</strong> → <code>feature/*</code> off <code>develop</code> → PR to <code>develop</code>.</li>
+      <li><strong>Bundle to prod</strong> → <code>release/*</code> off <code>develop</code> → PR to <code>main</code> → merge → apply.</li>
+      <li><strong>Emergency fix</strong> → <code>hotfix/*</code> off <code>main</code> → PR to <code>main</code> → merge → apply → back-merge to <code>develop</code>.</li>
+    </ul>
+  </section>
+
+  <section id="gotchas">
+    <h2>Common gotchas &amp; quick fixes</h2>
+    <h3>“cannot pull with rebase: You have unstaged changes.”</h3>
+<pre><code>git stash push -u -m "wip"
+git pull --rebase
+git stash pop</code></pre>
+
+    <h3>Local pre-commit hook blocks commits (<code>pre-commit</code> not found)</h3>
+<pre><code>git commit -m "msg" --no-verify</code></pre>
+    <p class="hint">Optional: install hooks later if you want local checks.</p>
+
+    <h3>CRLF/LF warning on Windows</h3>
+    <p class="hint">Harmless. You can add a <code>.gitattributes</code> later to normalize line endings.</p>
+
+    <h3>You don’t have Docker locally</h3>
+    <p class="hint">That’s fine. The Checkov Docker step runs on GitHub’s runner only.</p>
+  </section>
+
+  <footer>
+    Built for your repo’s GitFlow-lite rulesets and Terraform CI. Print-friendly.
+  </footer>
+</main>
+</body>
+</html>
