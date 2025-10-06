@@ -1,25 +1,30 @@
 ###############################################################
 # 05 - PR Quality Gate (fmt → validate → TFLint → Checkov → Plan)
 # Purpose:
-#  - Fast feedback on pull_requests.
-#  - Runs with OIDC (read-only; no apply).
-#  - Uploads plan as artifact for reviewers.
+#  - Fast feedback for *pull requests* (no apply).
+#  - Uses OIDC to read AWS (no long-lived keys).
+#  - Uploads a Terraform plan artifact for reviewers.
 # Notes:
-#  - Uses repo Variables created by bootstrap:
+#  - Requires repo Variables set by bootstrap:
 #    AWS_REGION, AWS_ROLE_ARN, TF_STATE_BUCKET, TF_STATE_TABLE, TF_STATE_KEY
 ###############################################################
-name: 05 - PR Quality Gate
 
-on:
-    pull_request:
-        branches: ["**"]
+name: 05 - PR Quality Gate # Name seen in Actions UI
 
-permissions:
-    id-token: write # OIDC
-    contents: read
-    pull-requests: write # (optional) to post annotations/comments later
+on: # ───────── Triggers for this workflow ─────────
+    pull_request: # Run on PR events only (opened, synchronize, etc.)
+        branches: # ← ENFORCES: which *target* branches allow this workflow
+            - develop #    run when PR targets develop (normal dev flow)
+            - main #    run when PR targets main (e.g., hotfix or final release)
+            - release/* #    run when PR targets any release/* branch
+            - hotfix/* #    run when PR targets any hotfix/* branch
 
-concurrency:
+permissions: # ───────── Token permissions ─────────
+    id-token: write # OIDC → AWS STS
+    contents: read # Read code
+    pull-requests: write # (Optional) comment/annotate PRs
+
+concurrency: # ───────── Avoid duplicate PR runs ─────────
     group: pr-quality-${{ github.event.pull_request.number }}
     cancel-in-progress: true
 
@@ -28,10 +33,11 @@ jobs:
         runs-on: ubuntu-latest
 
         steps:
-            - uses: actions/checkout@v4
+            - name: Checkout repo
+              uses: actions/checkout@v5 # Stable latest major
 
             ###############################################################
-            # Preflight: verify Variables exist & region format is valid
+            # Preflight — verify Variables
             ###############################################################
             - name: Preflight — verify Variables
               shell: bash
@@ -43,18 +49,17 @@ jobs:
                   [ -n "${{ vars.TF_STATE_TABLE }}" ] || { echo "Missing variable: TF_STATE_TABLE"; exit 1; }
                   [ -n "${{ vars.TF_STATE_KEY }}" ] || { echo "Missing variable: TF_STATE_KEY"; exit 1; }
                   if [[ ! "${{ vars.AWS_REGION }}" =~ ^[a-z]+-[a-z]+-[0-9]+$ ]]; then
-                    echo "Invalid AWS_REGION: '${{ vars.AWS_REGION }}' (expected 'us-east-1', 'eu-west-1', etc.)"
-                    exit 1
+                    echo "Invalid AWS_REGION: '${{ vars.AWS_REGION }}'"; exit 1
                   fi
                   echo "Preflight OK."
 
             - name: Setup Terraform
               uses: hashicorp/setup-terraform@v3
               with:
-                  terraform_version: 1.6.0
+                  terraform_version: 1.13.3 # Latest stable TF
 
             - name: Configure AWS credentials (OIDC)
-              uses: aws-actions/configure-aws-credentials@v4
+              uses: aws-actions/configure-aws-credentials@v5
               with:
                   role-to-assume: ${{ vars.AWS_ROLE_ARN }}
                   aws-region: ${{ vars.AWS_REGION }}
@@ -84,9 +89,9 @@ jobs:
             # TFLint (best-practice lints for AWS/Terraform)
             ###############################################################
             - name: Setup TFLint
-              uses: terraform-linters/setup-tflint@v4
+              uses: terraform-linters/setup-tflint@v5
               with:
-                  tflint_version: v0.50.3
+                  tflint_version: v0.59.1
 
             - name: TFLint init & run
               run: |
@@ -97,18 +102,18 @@ jobs:
             # Checkov (policy/security scan for Terraform)
             ###############################################################
             - name: Setup Python
-              uses: actions/setup-python@v5
+              uses: actions/setup-python@v6
               with:
-                  python-version: "3.11"
+                  python-version: "3.13"
 
             - name: Install Checkov
-              run: pip install --quiet checkov
+              run: pip install --quiet "checkov==3.2.474"
 
             - name: Checkov scan (fail on findings)
               run: checkov -d . --framework terraform
 
             ###############################################################
-            # PLAN (no lock, no refresh) and upload artifact for reviewers
+            # PLAN (no lock, no refresh) + upload artifact for reviewers
             ###############################################################
             - name: Terraform plan (safe for PRs)
               env:
