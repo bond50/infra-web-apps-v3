@@ -1,8 +1,8 @@
-# .github/workflows/05-pr-quality-gate.yml
 ###############################################################
 # 05 - PR Quality Gate (fmt → validate → TFLint → Checkov → Plan)
 #  - Runs on PRs to any branch
 #  - Uses OIDC for AWS (no apply)
+#  - Per-PR Terraform workspace to avoid state lock clashes
 #  - Uploads tfplan + Checkov SARIF as artifacts
 ###############################################################
 name: 05 - PR Quality Gate
@@ -34,14 +34,10 @@ jobs:
         shell: bash
         run: |
           set -eu
-          [ -n "${{ vars.AWS_REGION }}" ] || { echo "Missing variable: AWS_REGION"; exit 1; }
-          [ -n "${{ vars.AWS_ROLE_ARN }}" ] || { echo "Missing variable: AWS_ROLE_ARN"; exit 1; }
+          [ -n "${{ vars.AWS_REGION }}" ]      || { echo "Missing variable: AWS_REGION"; exit 1; }
+          [ -n "${{ vars.AWS_ROLE_ARN }}" ]    || { echo "Missing variable: AWS_ROLE_ARN"; exit 1; }
           [ -n "${{ vars.TF_STATE_BUCKET }}" ] || { echo "Missing variable: TF_STATE_BUCKET"; exit 1; }
-          [ -n "${{ vars.TF_STATE_TABLE }}" ] || { echo "Missing variable: TF_STATE_TABLE"; exit 1; }
-          [ -n "${{ vars.TF_STATE_KEY }}" ] || { echo "Missing variable: TF_STATE_KEY"; exit 1; }
-          if [[ ! "${{ vars.AWS_REGION }}" =~ ^[a-z]+-[a-z]+-[0-9]+$ ]]; then
-            echo "Invalid AWS_REGION: '${{ vars.AWS_REGION }}'"; exit 1
-          fi
+          [ -n "${{ vars.TF_STATE_KEY }}" ]    || { echo "Missing variable: TF_STATE_KEY"; exit 1; }
           echo "Preflight OK."
 
       # -------------------- Terraform CLI --------------------
@@ -62,7 +58,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Derive a non-empty workspace name from PR head; fallback to base/name
+          # Derive a non-empty workspace name from PR head; safe chars only
           RAW="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-main}}"
           WS="branch-${RAW//[^a-zA-Z0-9-_]/-}"
           echo "Using workspace: $WS"
@@ -111,15 +107,10 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
-          # Show what "checkov" resolves to (helps diagnose PATH clashes)
-          type -a checkov || true
-          python - <<'PY'
-          # Remove any envs that might inject a bad --soft_fail flag via wrappers
           unset INPUT_SOFT_FAIL || true
           unset SOFT_FAIL || true
           unset CHECKOV_SOFT_FAIL || true
           mkdir -p reports
-          # Call the module directly to bypass any shell wrappers
           python -m checkov -d . --framework terraform --quiet \
             --output sarif --output-file-path reports/checkov.sarif
 
@@ -131,7 +122,7 @@ jobs:
           path: reports/checkov.sarif
           retention-days: 7
 
-      # -------------------- Plan (safe) --------------------
+      # -------------------- Plan (safe; no refresh/lock) --------------------
       - name: Terraform plan (safe for PRs)
         env:
           TF_VAR_region: ${{ vars.AWS_REGION }}

@@ -1,32 +1,31 @@
 ###############################################################
 # 10 - Terraform (plan on branches, apply on main)
-# Purpose:
-#  - Use GitHub OIDC to assume AWS role (no static keys).
-#  - Plan on branches/PRs; Apply only on main push.
-#  - Protect apply with GitHub Environment "production" (set reviewers).
+#  - Uses OIDC to assume AWS role
+#  - Isolates state by Terraform workspace per branch
+#  - Adds lock-timeout to avoid transient DynamoDB lock failures
+#  - Apply only on push to main (gated by "production" environment)
 ###############################################################
 name: 10 - Terraform (plan on branches, apply on main)
 
 on:
-  push:                       # ← Run on pushes (feature/*, develop, release/*, hotfix/*, main)
+  push:
     branches: ["**"]
-  pull_request:               # ← Also run on PRs (plans only)
+  pull_request:
     branches: ["**"]
 
 permissions:
-  id-token: write             # ← Needed for OIDC to assume role
-  contents: read              # ← Needed to checkout
+  id-token: write
+  contents: read
 
 concurrency:
-  group: terraform-${{ github.ref_name }}     # ← One run per branch name
-  cancel-in-progress: true                    # ← Cancel older run on new push
+  group: terraform-${{ github.ref_name }}
+  cancel-in-progress: true
 
 jobs:
   tf:
     runs-on: ubuntu-latest
 
-    # Apply is gated by environment protections (Settings → Environments → production)
-    # Only set environment when it's a PUSH to main; PRs & other branches are not gated.
+    # Apply gated by the "production" environment protections
     environment: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && 'production' || '' }}
 
     steps:
@@ -50,21 +49,40 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.13.3           # ← Pinned Terraform CLI
+          terraform_version: 1.13.3
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v5
         with:
-          role-to-assume:   ${{ vars.AWS_ROLE_ARN }}  # ← Role created by bootstrap
-          aws-region:       ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
           role-session-name: gha-tf-${{ github.run_id }}
 
       - name: Sanity — whoami
         run: aws sts get-caller-identity
 
-      - name: Terraform Init (S3 backend via Variables)
+      # Backend supports per-workspace isolation
+      - name: Terraform Init (S3 backend; per-workspace capable)
         run: |
-          terraform init -input=false             -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"             -backend-config="key=${{ vars.TF_STATE_KEY }}"             -backend-config="region=${{ vars.AWS_REGION }}"             -backend-config="dynamodb_table=${{ vars.TF_STATE_TABLE }}"             -backend-config="encrypt=true"
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ vars.TF_STATE_KEY }}" \
+            -backend-config="workspace_key_prefix=envs" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_STATE_TABLE }}" \
+            -backend-config="encrypt=true"
+
+      # Use one workspace per branch; "prod" for main
+      - name: Select Terraform workspace (prod on main, branch for others)
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF_NAME}" = "main" ]; then
+            WS="prod"
+          else
+            # sanitize branch names like "feature/foo" → "feature-foo"
+            WS="branch-${GITHUB_REF_NAME//\//-}"
+          fi
+          terraform workspace select "$WS" || terraform workspace new "$WS"
 
       - name: Terraform Validate & Plan
         env:
@@ -72,7 +90,7 @@ jobs:
         run: |
           terraform fmt -check
           terraform validate
-          terraform plan -input=false -no-color -out=tfplan.bin
+          terraform plan -input=false -no-color -lock-timeout=5m -out=tfplan.bin
 
       - name: Upload plan artifact (for non-main branches)
         if: github.ref != 'refs/heads/main'
@@ -86,4 +104,4 @@ jobs:
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         env:
           TF_VAR_region: ${{ vars.AWS_REGION }}
-        run: terraform apply -input=false -auto-approve tfplan.bin
+        run: terraform apply -input=false -lock-timeout=5m -auto-approve tfplan.bin
