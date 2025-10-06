@@ -58,11 +58,12 @@ jobs:
           role-session-name: gha-pr-${{ github.run_id }}
 
       # Init with S3 backend (NO DynamoDB), workspace per PR head branch
+      # Init with S3 backend (NO DynamoDB), workspace per PR head branch
       - name: Terraform Init (S3 backend only) + Workspace
         shell: bash
         run: |
           set -euo pipefail
-          # Derive a non-empty workspace name from PR head; fallback to base/name
+          # Derive a non-empty workspace name from PR head; safe chars only
           RAW="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-main}}"
           WS="branch-${RAW//[^a-zA-Z0-9-_]/-}"
           echo "Using workspace: $WS"
@@ -74,8 +75,8 @@ jobs:
             -backend-config="encrypt=true"
 
           terraform workspace list || true
-          # IMPORTANT: flag before the NAME
-          terraform workspace select -or-create "$WS"
+          # Portable & reliable: try select, if missing then create
+          terraform workspace select "$WS" || terraform workspace new "$WS"
 
       # -------------------- fmt + validate --------------------
       - name: Terraform fmt (check only)
