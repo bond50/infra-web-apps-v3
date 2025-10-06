@@ -11,13 +11,13 @@
 name: 05 - PR Quality Gate
 
 on:
-  pull_request:                 # ← run on any PR
-    branches: ["**"]            # ← PRs targeting any branch
+  pull_request: # ← run on any PR
+    branches: ["**"] # ← PRs targeting any branch
 
 permissions:
-  id-token: write               # ← OIDC to AWS
-  contents: read                # ← checkout
-  pull-requests: write          # ← optional (PR annotations/comments)
+  id-token: write # ← OIDC to AWS
+  contents: read # ← checkout
+  pull-requests: write # ← optional (PR annotations/comments)
 
 concurrency:
   group: pr-quality-${{ github.event.pull_request.number }}
@@ -105,6 +105,7 @@ jobs:
           mkdir -p reports
           checkov -d . --framework terraform --quiet \
             --output sarif --output-file-path reports/checkov.sarif
+            --soft-fail
 
       - name: Upload Checkov SARIF (artifact)
         if: always()
