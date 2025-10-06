@@ -96,19 +96,17 @@ jobs:
         run: |
           tflint --init
           tflint -f compact
-
-      ###############################################################
-      # Checkov (policy/security scan for Terraform)
-      # Use the official action and DO NOT pass soft_fail to avoid
-      # underscore arg leaking to CLI.
-      ###############################################################
-      - name: Checkov scan (fail on findings)
-        uses: bridgecrewio/checkov-action@v12
-        with:
-          directory: .
-          framework: terraform
-          quiet: true
-          # soft_fail intentionally omitted (default is hard-fail)
+        ###############################################################
+        # Checkov (policy/security scan for Terraform) — run via Docker
+        # NOTE: Docker is available on GitHub's ubuntu-latest runner.
+        # This avoids the action wrapper bug that adds --soft_fail=False.
+        ###############################################################
+      - name: Checkov scan (Docker; fail on findings)
+        run: |
+          docker run --rm \
+            -v "$PWD":/tf -w /tf \
+            ghcr.io/bridgecrewio/checkov:3.2.474 \
+            -d /tf --framework terraform --quiet
 
       ###############################################################
       # PLAN (no lock, no refresh) + upload artifact for reviewers
