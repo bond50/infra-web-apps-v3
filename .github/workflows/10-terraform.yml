@@ -1,34 +1,33 @@
-# 10 - Terraform (plan on branches, apply on main)
-# - Plan on any push/PR
-# - Apply only on push to main (gated by environment "production")
-# - Uses S3 backend ONLY (no DynamoDB lock); per-branch workspace; -lock=false
-name: 10 - Terraform (plan on branches, apply on main)
+# 05 - PR Quality Gate (fmt → validate → TFLint → Checkov → Plan)
+# - Runs on PRs to any branch
+# - Uses OIDC for AWS (no apply)
+# - Uploads tfplan + Checkov SARIF as artifacts
+name: 05 - PR Quality Gate
 
 on:
-  push:
-    branches: ["**"]
   pull_request:
     branches: ["**"]
 
 permissions:
   id-token: write
   contents: read
+  pull-requests: write
 
 concurrency:
-  group: terraform-${{ github.ref_name }}
+  group: pr-quality-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  tf:
+  pr-quality:
     runs-on: ubuntu-latest
-    # Only set environment when it's a PUSH to main; PRs & other branches are not gated.
-    environment: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && 'production' || '' }}
 
     steps:
+      # -------------------- Checkout --------------------
       - name: Checkout repository code
         uses: actions/checkout@v5
 
-      - name: Preflight — verify Variables (OIDC mode)
+      # -------------------- Preflight --------------------
+      - name: Preflight — verify Variables
         shell: bash
         run: |
           set -eu
@@ -38,6 +37,7 @@ jobs:
           [ -n "${{ vars.TF_STATE_KEY }}" ]    || { echo "Missing variable: TF_STATE_KEY"; exit 1; }
           echo "Preflight OK."
 
+      # -------------------- Terraform CLI --------------------
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -48,49 +48,86 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
-          role-session-name: gha-tf-${{ github.run_id }}
+          role-session-name: gha-pr-${{ github.run_id }}
 
-      - name: Sanity — whoami
-        run: aws sts get-caller-identity
-
-      # Init with S3 backend (NO DynamoDB) and branch workspace
+      # Init with S3 backend (NO DynamoDB), workspace per PR head branch
       - name: Terraform Init (S3 backend only) + Workspace
         shell: bash
         run: |
           set -euo pipefail
 
-          # Use the branch name for workspace; fall back to 'main' if detached
-          BRANCH="${GITHUB_REF_NAME:-main}"
-          WS="branch-${BRANCH//[^a-zA-Z0-9-_]/-}"
+          # Use the PR head branch as workspace
+          WS="branch-${GITHUB_HEAD_REF//[^a-zA-Z0-9-_]/-}"
           echo "Using workspace: $WS"
 
           terraform init -input=false \
             -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
             -backend-config="region=${{ vars.AWS_REGION }}" \
             -backend-config="encrypt=true" \
-            -backend-config="workspace_key_prefix=${{ vars.TF_STATE_KEY }}"
+            -backend-config="workspace_key_prefix=${{ vars.TF_STATE_KEY }}" \
+            -backend-config="key=${{ vars.TF_STATE_KEY }}/terraform.tfstate"
 
           terraform workspace list || true
           terraform workspace select "$WS" -or-create
 
-      - name: Terraform Validate & Plan
+      # -------------------- fmt + validate --------------------
+      - name: Terraform fmt (check only)
+        run: terraform fmt -check -recursive
+
+      - name: Terraform validate
         env:
           TF_VAR_region: ${{ vars.AWS_REGION }}
-        run: |
-          terraform fmt -check
-          terraform validate
-          terraform plan -input=false -no-color -lock=false -out=tfplan.bin
+        run: terraform validate
 
-      - name: Upload plan artifact (for non-main branches)
-        if: github.ref != 'refs/heads/main'
+      # -------------------- TFLint --------------------
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v5
+        with:
+          tflint_version: v0.59.1
+
+      - name: TFLint init & run
+        run: |
+          tflint --init
+          tflint -f compact
+
+      # -------------------- Checkov (CLI ONLY, non-blocking) --------------------
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install Checkov
+        run: pip install --quiet "checkov==3.2.474"
+
+      - name: Run Checkov (SARIF output, non-blocking, env sanitized)
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          unset INPUT_SOFT_FAIL || true
+          unset SOFT_FAIL || true
+          unset CHECKOV_SOFT_FAIL || true
+          mkdir -p reports
+          python -m checkov -d . --framework terraform --quiet \
+            --output sarif --output-file-path reports/checkov.sarif
+
+      - name: Upload Checkov SARIF (artifact)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: tfplan
-          path: tfplan.bin
+          name: checkov-sarif
+          path: reports/checkov.sarif
           retention-days: 7
 
-      - name: Terraform Apply (only on main; gated by environment)
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      # -------------------- Plan (safe; no lock/refresh) --------------------
+      - name: Terraform plan (safe for PRs)
         env:
           TF_VAR_region: ${{ vars.AWS_REGION }}
-        run: terraform apply -input=false -auto-approve -lock=false tfplan.bin
+        run: terraform plan -input=false -no-color -lock=false -refresh=false -out=tfplan.bin
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-pr-${{ github.event.pull_request.number }}
+          path: tfplan.bin
+          retention-days: 7
