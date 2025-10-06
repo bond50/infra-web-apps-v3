@@ -52,6 +52,9 @@
             .workflow.hotfix {
                 border-left-color: #e74c3c;
             }
+            .workflow.core {
+                border-left-color: #1abc9c;
+            }
             code {
                 background-color: #eee;
                 padding: 2px 4px;
@@ -111,6 +114,10 @@
             .explanation-box strong {
                 color: #007acc;
             }
+            .merge-note {
+                color: #e74c3c;
+                font-weight: bold;
+            }
         </style>
     </head>
     <body>
@@ -128,15 +135,43 @@
                     <li>
                         <strong>Shipping to Production</strong>:
                         <code>release/*</code> off <code>develop</code> &rarr;
-                        PR to <code>main</code> &rarr; merge &rarr; **APPLY**.
+                        PR to <code>main</code> &rarr; merge &rarr;
+                        <strong>APPLY</strong>.
                     </li>
                     <li>
                         <strong>Emergency Fix</strong>:
                         <code>hotfix/*</code> off <code>main</code> &rarr; PR to
-                        <code>main</code> &rarr; merge &rarr; **APPLY** &rarr;
-                        Back-merge to <code>develop</code>.
+                        <code>main</code> &rarr; merge &rarr;
+                        <strong>APPLY</strong> &rarr; Back-merge to
+                        <code>develop</code>.
                     </li>
                 </ul>
+            </div>
+
+            <div class="workflow core">
+                <h2>A. Core Git Sync Commands (Always Start Here)</h2>
+                <p>
+                    <strong>Goal:</strong> Ensure your local branch is perfectly
+                    synchronized with the remote, maintaining a **linear commit
+                    history**.
+                </p>
+                <pre><code># 1. Update remote tracking branches (safe to run anywhere)
+git fetch origin
+
+# 2. Get to your target branch (e.g., develop)
+git switch develop
+
+# 3. Pull updates, replaying your local commits on top of remote
+git pull --rebase </code></pre>
+                <div class="explanation-box">
+                    <p>
+                        <strong>Why <code>--rebase</code>?</strong> It takes
+                        your local commits, gets the remote changes, and
+                        reapplies your commits **on top** of the remote changes.
+                        This avoids unnecessary merge commits and keeps your
+                        history clean and straight.
+                    </p>
+                </div>
             </div>
 
             <div class="workflow">
@@ -148,9 +183,8 @@
                 </p>
 
                 <h3>Step 1: Start Clean on <code>develop</code></h3>
-                <pre><code># Be anywhere, switch to develop
+                <pre><code># Sync develop and ensure linear history
 git switch develop
-# IMPORTANT: Use --rebase to get a clean, linear update of develop
 git pull --rebase </code></pre>
 
                 <h3>
@@ -171,7 +205,7 @@ git commit -m "feat: short description of the change"
 # git commit -m "feat: ..." --no-verify </code></pre>
 
                 <h3>Step 4: Push the Feature Branch & Open PR</h3>
-                <pre><code># Push to the remote repository
+                <pre><code># The first push must set the upstream remote
 git push -u origin feature/my-change </code></pre>
                 <ul>
                     <li>
@@ -183,8 +217,8 @@ git push -u origin feature/my-change </code></pre>
                         validate, tflint, checkov, safe plan).
                     </li>
                     <li>
-                        **If CI Fails:** Fix locally, commit, and push to the
-                        same branch. CI re-runs automatically.
+                        **If CI Fails:** Fix locally, commit, and **simply**
+                        <code>git push</code>. CI re-runs automatically.
                     </li>
                 </ul>
 
@@ -192,16 +226,18 @@ git push -u origin feature/my-change </code></pre>
                 <ul>
                     <li>
                         When PR is green (and approvals met), click **Squash and
-                        merge**.
+                        merge** on the web UI.
+                    </li>
+                    <li>
+                        <strong>Result:</strong> Your change is integrated into
+                        <code>develop</code>. It is **NOT** yet in production.
                     </li>
                 </ul>
                 <pre><code># Sync your local develop for the next feature
 git switch develop
-git pull --rebase </code></pre>
-                <p>
-                    <strong>Result:</strong> Your change is integrated into
-                    <code>develop</code>. It is **NOT** yet in production.
-                </p>
+git pull --rebase
+# (Optional) Clean up local branch
+git branch -d feature/my-change </code></pre>
             </div>
 
             <div class="workflow">
@@ -215,7 +251,7 @@ git pull --rebase </code></pre>
 
                 <h3>Step 1: Cut a Release Branch from <code>develop</code></h3>
                 <pre><code>git switch develop
-git pull --rebase         # Ensure develop is 100% up to date
+git pull --rebase             # Ensure develop is 100% up to date
 git switch -c release/v0.1.0
 git push -u origin release/v0.1.0 </code></pre>
 
@@ -228,7 +264,9 @@ git push -u origin release/v0.1.0 </code></pre>
                     <li>**CI Action:** Runs "05 - PR Quality Gate" again.</li>
                 </ul>
 
-                <h3>Step 3: Merge to <code>main</code> & Apply</h3>
+                <h3 class="merge-note">
+                    Step 3: Merge to <code>main</code> & Apply (IMPORTANT!)
+                </h3>
                 <ul>
                     <li>
                         When green, **Squash and merge** the PR into
@@ -246,12 +284,13 @@ git push -u origin release/v0.1.0 </code></pre>
                     <code>develop</code>
                 </h3>
                 <p>
-                    This keeps <code>develop</code> in sync with the production
-                    state (including the merge commit).
+                    This is crucial for ensuring <code>develop</code> contains
+                    the exact production history (including the final merge
+                    commit).
                 </p>
                 <pre><code>git switch develop
-git pull --rebase                 # Update develop with any other changes
-git merge --no-ff origin/main     # Pull main's history into develop
+git pull --rebase                # Update develop with any other changes
+git merge --no-ff origin/main    # Pull main's history into develop
 git push </code></pre>
             </div>
 
@@ -265,7 +304,7 @@ git push </code></pre>
 
                 <h3>Step 1: Branch from <code>main</code></h3>
                 <pre><code>git switch main
-git pull --rebase             # Ensure local main is current
+git pull --rebase               # Ensure local main is current
 git switch -c hotfix/fix-bug </code></pre>
 
                 <h3>
@@ -282,7 +321,9 @@ git push -u origin hotfix/fix-bug </code></pre>
                     <li>**CI Action:** "05 - PR Quality Gate" runs.</li>
                 </ul>
 
-                <h3>Step 3: Merge to <code>main</code> & Apply</h3>
+                <h3 class="merge-note">
+                    Step 3: Merge to <code>main</code> & Apply (URGENT!)
+                </h3>
                 <ul>
                     <li>When green, merge to <code>main</code>.</li>
                     <li>
@@ -296,9 +337,8 @@ git push -u origin hotfix/fix-bug </code></pre>
                     <code>develop</code>
                 </h3>
                 <p>
-                    This is crucial: your fix must be integrated into
-                    <code>develop</code> to prevent the bug from reappearing in
-                    the next release.
+                    Integrate your fix into <code>develop</code> to prevent the
+                    bug from reappearing in the next release.
                 </p>
                 <pre><code>git switch develop
 git pull --rebase
@@ -306,40 +346,48 @@ git merge --no-ff origin/main
 git push </code></pre>
             </div>
 
-            <div class="workflow">
-                <h2>CI Workflow Explained</h2>
-                <p>Understand what's happening when you push your code.</p>
+            <div class="workflow core">
+                <h2>4. Conflict Resolution (Fast Mini-Guide)</h2>
+                <p>
+                    When Git stops with conflict markers (`<<<<<<<`, `=======`,
+                    `>>>>>>>`) during a merge or rebase.
+                </p>
+
+                <h3>Conflict Resolution Commands</h3>
                 <ul>
                     <li>
-                        <strong>05 - PR Quality Gate (Runs on PRs):</strong>
-                        <ul>
-                            <li>
-                                Ensures formatting, syntax, best practices, and
-                                security (fmt, validate, tflint, checkov).
-                            </li>
-                            <li>
-                                Runs a **SAFE** <code>terraform plan</code> and
-                                saves the artifact.
-                            </li>
-                            <li><strong>NEVER applies any changes.</strong></li>
-                        </ul>
+                        <strong
+                            >Keep YOUR side entirely
+                            (<code>HEAD</code>):</strong
+                        >
+                        <pre><code>git checkout --ours path/to/file
+git add path/to/file</code></pre>
                     </li>
                     <li>
-                        <strong>10 - Terraform (Runs on Push):</strong>
-                        <ul>
-                            <li>
-                                **On pushes to feature/release/develop
-                                branches:** Only runs
-                                <code>terraform plan</code>.
-                            </li>
-                            <li>
-                                **On pushes to <code>main</code>:** Runs
-                                <code>terraform apply</code> (respects
-                                environment gates).
-                            </li>
-                        </ul>
+                        <strong
+                            >Keep the OTHER side entirely (incoming
+                            change):</strong
+                        >
+                        <pre><code>git checkout --theirs path/to/file
+git add path/to/file</code></pre>
+                    </li>
+                    <li>
+                        <strong>Manual Mix:</strong> Edit the file, remove all
+                        markers (`<<<<<<<`, `=======`, `>>>>>>>`), keep the
+                        desired lines, then <code>git add path/to/file</code>.
                     </li>
                 </ul>
+
+                <h3>Finalize the Process</h3>
+                <p>After resolving and adding **all** conflicted files:</p>
+                <pre><code># If you were doing a merge (git merge --no-ff)
+git commit
+
+# If you were doing a rebase (git pull --rebase)
+git rebase --continue
+
+# To abort and start over (lose current merge/rebase progress)
+git merge --abort    # or git rebase --abort</code></pre>
             </div>
 
             <div class="workflow">
@@ -350,68 +398,18 @@ git push </code></pre>
                             >"cannot pull with rebase: You have unstaged
                             changes."</strong
                         >
-                        <pre><code>git stash push -u -m "wip"
-git pull --rebase
-git stash pop</code></pre>
                         <div class="explanation-box">
                             <p>
                                 **The Three-Command Solution (Stash & Rebase):**
-                                This sequence lets you safely update your branch
-                                while actively working.
+                                This safely saves, updates, and restores your
+                                work.
                             </p>
-                            <p>
-                                1.
-                                <strong><code>git stash push -u -m "wip"</code></strong
-                                >:
-                                <strong>Saves your work.</strong>
-                                <ul>
-                                    <li>
-                                        <code>git stash push</code>: Saves the
-                                        state of your working directory.
-                                    </li>
-                                    <li>
-                                        <code>-u</code> (or
-                                        <code>--include-untracked</code>):
-                                        **Crucial!** Includes new (untracked)
-                                        files in the stash.
-                                    </li>
-                                    <li>
-                                        <code>-m "wip"</code>: Adds a helpful
-                                        message.
-                                    </li>
-                                </ul>
-                            </p>
-                            <p>
-                                2.
-                                <strong><code>git pull --rebase</code></strong
-                                >: <strong>Updates the branch linearly.</strong>
-                                <ul>
-                                    <li>
-                                        Fetches remote changes and sets your
-                                        local commits aside.
-                                    </li>
-                                    <li>
-                                        Re-applies your local commits neatly
-                                        **on top** of the new remote history,
-                                        keeping a clean, straight timeline.
-                                    </li>
-                                </ul>
-                            </p>
-                            <p>
-                                3.
-                                <strong><code>git stash pop</code></strong
-                                >: <strong>Restores your work.</strong>
-                                <ul>
-                                    <li>
-                                        Retrieves the stashed changes and applies
-                                        them to your clean, updated branch.
-                                    </li>
-                                    <li>
-                                        **Removes the entry** from the stash
-                                        stack after applying.
-                                    </li>
-                                </ul>
-                            </p>
+                            <pre><code># 1. Save all your work, including untracked files (-u)
+git stash push -u -m "wip"
+# 2. Update the branch cleanly
+git pull --rebase
+# 3. Restore your saved work
+git stash pop</code></pre>
                         </div>
                     </li>
                     <li>
@@ -419,7 +417,10 @@ git stash pop</code></pre>
                             >Local pre-commit hook blocks commits (e.g.,
                             pre-commit not found)</strong
                         >
-                        <p>Bypass once to keep moving:</p>
+                        <p>
+                            Bypass once to keep moving (CI still checks
+                            server-side):
+                        </p>
                         <pre><code>git commit -m "msg" --no-verify</code></pre>
                     </li>
                     <li>
