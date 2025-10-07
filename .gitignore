@@ -1,0 +1,11 @@
+.terraform/
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+.terraform.tfstate.lock.info
+*.tfplan
+*.bin
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
