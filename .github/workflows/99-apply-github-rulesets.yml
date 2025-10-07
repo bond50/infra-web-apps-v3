@@ -10,6 +10,7 @@ permissions:
 jobs:
   apply-github-admin:
     runs-on: ubuntu-latest
+
     defaults:
       run:
         working-directory: github # run TF in ./github where rulesets.tf lives
