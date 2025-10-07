@@ -7,7 +7,7 @@
 ###############################################################
 
 locals {
-  pr_gate_context = "05 - PR Quality Gate / pr-quality"
+  pr_gate_context = "05 - PR Quality Gate / pr-quality (pull_request)"
 }
 
 # ---- MAIN ----
