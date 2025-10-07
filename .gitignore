@@ -1,7 +1,16 @@
+# Terraform cache & state
 .terraform/
 **/.terraform/*
 *.tfstate
 *.tfstate.*
+crash.log
+.terraform.tfstate.lock.info
+
+# Plans / binaries
+*.tfplan
+*.bin
+
+# Local overrides
 .terraform.tfstate.lock.info
 *.tfplan
 *.bin
