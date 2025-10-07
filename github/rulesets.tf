@@ -67,7 +67,7 @@ resource "github_repository_ruleset" "develop" {
     deletion                = true
 
     required_status_checks {
-      strict_required_status_checks_policy = false
+      strict_required_status_checks_policy = true
       required_check { context = local.pr_gate_context }
     }
   }
