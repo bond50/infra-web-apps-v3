@@ -6,14 +6,17 @@
 # - require only the PR Quality Gate; NOT strict (avoids "expected" hangs)
 ###############################################################
 
+# locals {
+#   pr_gate_context = "05 - PR Quality Gate / pr-quality"
+# }
+
+
 locals {
   # Match the exact name reported by GitHub Actions for a pull_request event
   pr_gate_context = "05 - PR Quality Gate / pr-quality"
-  # Match the exact name reported by GitHub Actions for a pull_request event
-  pr_gate_context = "05 - PR Quality Gate / pr-quality (pull_request)"
+
 }
 
-# ---- MAIN BRANCH----
 # ---- MAIN ----
 resource "github_repository_ruleset" "main" {
   repository  = var.repo_name
