@@ -11,6 +11,9 @@ crash.log
 *.bin
 
 # Local overrides
+.terraform.tfstate.lock.info
+*.tfplan
+*.bin
 override.tf
 override.tf.json
 *_override.tf
