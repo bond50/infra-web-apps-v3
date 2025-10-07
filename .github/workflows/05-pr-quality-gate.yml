@@ -29,6 +29,19 @@ jobs:
       - name: Checkout repository code
         uses: actions/checkout@v5
 
+      - name: Enforce branch naming (PRs only)
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRANCH="${GITHUB_HEAD_REF:-}"
+          echo "Head branch: $BRANCH"
+          # Allowed: feature/*, release/*, hotfix/*, develop, main
+          if [[ ! "$BRANCH" =~ ^(feature\/.+|release\/.+|hotfix\/.+|develop|main)$ ]]; then
+            echo "Branch name '$BRANCH' violates naming policy. Allowed: feature/*, release/*, hotfix/*, develop, main."
+            exit 1
+          fi
+
       - name: Preflight — verify Variables
         shell: bash
         run: |
