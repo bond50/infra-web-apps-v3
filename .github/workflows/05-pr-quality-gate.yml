@@ -24,6 +24,7 @@ concurrency:
 jobs:
   pr-quality:
     runs-on: ubuntu-latest
+    name: pr-quality
 
     steps:
       - name: Checkout repository code
