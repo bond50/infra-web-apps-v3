@@ -1,729 +1,3 @@
-filename: ./.checkov.yml
-content:
-###############################################################
-# .checkov.yml
-# Purpose:
-#  - Configure policy-as-code scan for Terraform.
-#  - Our CI runs: checkov -d . --framework terraform
-# Notes:
-#  - Start minimal; add skips/soft-fail as you triage findings.
-###############################################################
-
-# Limit to Terraform (we’re scanning IaC only here)
-framework: [terraform]
-
-# Exit with non-zero on findings (keeps PR gate strict).
-soft_fail: false
-# Optionally skip folders (e.g., third-party or experimental)
-# skip_paths:
-#   - "modules/experimental"
-#   - "bootstrap"        # uncomment if bootstrap raises unavoidable warnings
-
-# Optionally skip specific checks (add IDs after triaging)
-# skip_checks:
-#   - CKV_AWS_999  # example placeholder
-
-----------------------------------------
-filename: ./.github/workflows/00-bootstrap-aws-backend.yml
-content:
-###############################################################
-# 00 - Bootstrap AWS Backend (idempotent with pre-imports)
-# Purpose:
-#  - One-time bootstrap using TEMP AWS keys:
-#      * S3 bucket (Terraform state)
-#      * DynamoDB table (state lock)
-#      * GitHub OIDC provider + IAM Role
-#      * Repo Variables: AWS_REGION, AWS_ROLE_ARN, TF_STATE_*
-#  - Idempotent: if resources already exist, we import them to state
-#    BEFORE apply, so you don't get 409/EntityAlreadyExists errors.
-#  - After success, delete the temporary AWS keys (and optionally GH_ADMIN_TOKEN).
-###############################################################
-name: 00 - Bootstrap AWS Backend
-
-on:
-  workflow_dispatch:
-    inputs:
-      bucket_name:
-        description: "Globally-unique S3 bucket for Terraform state (e.g., my-tfstate-1234abcd)"
-        required: true
-      dynamodb_table_name:
-        description: "DynamoDB table for state locking (e.g., tf-locks-my-tfstate)"
-        required: true
-      tf_state_key:
-        description: "State key path (e.g., infra/terraform.tfstate)"
-        required: true
-      github_owner:
-        description: "GitHub owner/org (e.g., bond50)"
-        required: true
-      github_repo:
-        description: "GitHub repo name (no owner, e.g., infra-web-apps-v3)"
-        required: true
-      project_name:
-        description: "Project short name (tags & IAM role name prefix)"
-        required: true
-        default: "web-apps"
-
-permissions:
-  contents: read
-  actions: write
-
-jobs:
-  bootstrap:
-    runs-on: ubuntu-latest
-
-    env:
-      ###############################################################
-      # Map inputs to TF_VAR_* so Terraform picks them up automatically
-      ###############################################################
-      TF_VAR_aws_region: ${{ vars.AWS_REGION }}
-      TF_VAR_project_name: ${{ inputs.project_name }}
-      TF_VAR_bucket_name: ${{ inputs.bucket_name }}
-      TF_VAR_dynamodb_table_name: ${{ inputs.dynamodb_table_name }}
-      TF_VAR_tf_state_key: ${{ inputs.tf_state_key }}
-      TF_VAR_github_owner: ${{ inputs.github_owner }}
-      TF_VAR_github_repo: ${{ inputs.github_repo }}
-      TF_VAR_github_token: ${{ secrets.GH_ADMIN_TOKEN }}
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      ###############################################################
-      # Preflight: ensure bootstrap secrets/vars exist & region format is valid
-      ###############################################################
-      - name: Preflight — verify inputs/secrets/vars
-        shell: bash
-        run: |
-          set -eu
-          [ -n "${{ secrets.AWS_ACCESS_KEY_ID }}" ]     || { echo "Missing secret: AWS_ACCESS_KEY_ID"; exit 1; }
-          [ -n "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ] || { echo "Missing secret: AWS_SECRET_ACCESS_KEY"; exit 1; }
-          [ -n "${{ secrets.GH_ADMIN_TOKEN }}" ]        || { echo "Missing secret: GH_ADMIN_TOKEN"; exit 1; }
-          [ -n "${{ vars.AWS_REGION }}" ]               || { echo "Missing variable: AWS_REGION"; exit 1; }
-          if [[ ! "${{ vars.AWS_REGION }}" =~ ^[a-z]+-[a-z]+-[0-9]+$ ]]; then
-            echo "Invalid AWS_REGION: '${{ vars.AWS_REGION }}' (expected 'us-east-1', 'eu-west-1', etc.)"
-            exit 1
-          fi
-          echo "Preflight OK."
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.6.0
-
-      ###############################################################
-      # Configure TEMPORARY AWS credentials for bootstrap ONLY
-      ###############################################################
-      - name: Configure AWS credentials (temporary bootstrap keys)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ vars.AWS_REGION }}
-
-      - name: Sanity — whoami
-        run: aws sts get-caller-identity
-
-      - name: Terraform Init (bootstrap module)
-        working-directory: ./bootstrap
-        run: terraform init -input=false
-
-      ###############################################################
-      # IMPORT-IF-PRESENT: make reruns idempotent
-      # Imports for: OIDC provider, repo variables, S3 bucket,
-      # DynamoDB lock table, IAM role, and role policy attachment.
-      ###############################################################
-      - name: Import existing OIDC provider if present
-        shell: bash
-        run: |
-          set -eu
-          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
-          OIDC_ARN="arn:aws:iam::${ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com"
-          COUNT="$(aws iam list-open-id-connect-providers \
-            --query "OpenIDConnectProviderList[?Arn=='${OIDC_ARN}'] | length(@)" --output text)"
-          if [ "${COUNT}" != "0" ]; then
-            echo "OIDC provider exists; importing: ${OIDC_ARN}"
-            terraform -chdir=./bootstrap import -input=false aws_iam_openid_connect_provider.github "${OIDC_ARN}" || true
-          else
-            echo "OIDC provider does not exist yet — will be created by apply."
-          fi
-
-      - name: Import existing GitHub repo variables if present
-        shell: bash
-        env:
-          REPO: ${{ inputs.github_repo }}
-        run: |
-          set -eu
-          terraform -chdir=./bootstrap import -input=false github_actions_variable.aws_region      "${REPO}:AWS_REGION"      || true
-          terraform -chdir=./bootstrap import -input=false github_actions_variable.tf_state_bucket "${REPO}:TF_STATE_BUCKET" || true
-          terraform -chdir=./bootstrap import -input=false github_actions_variable.tf_state_table  "${REPO}:TF_STATE_TABLE"  || true
-          terraform -chdir=./bootstrap import -input=false github_actions_variable.tf_state_key    "${REPO}:TF_STATE_KEY"    || true
-          terraform -chdir=./bootstrap import -input=false github_actions_variable.aws_role_arn    "${REPO}:AWS_ROLE_ARN"    || true
-          echo "Repo variable imports done."
-
-      - name: Import existing S3 bucket if present
-        shell: bash
-        run: |
-          set -eu
-          BUCKET="${{ inputs.bucket_name }}"
-          if aws s3api head-bucket --bucket "${BUCKET}" 2>/dev/null; then
-            echo "S3 bucket exists; importing: ${BUCKET}"
-            terraform -chdir=./bootstrap import -input=false aws_s3_bucket.tfstate "${BUCKET}" || true
-          else
-            echo "S3 bucket does not exist yet — will be created by apply."
-          fi
-
-      - name: Import existing DynamoDB lock table if present
-        shell: bash
-        run: |
-          set -eu
-          TABLE="${{ inputs.dynamodb_table_name }}"
-          if aws dynamodb describe-table --table-name "${TABLE}" >/dev/null 2>&1; then
-            echo "DynamoDB table exists; importing: ${TABLE}"
-            terraform -chdir=./bootstrap import -input=false aws_dynamodb_table.tf_lock "${TABLE}" || true
-          else
-            echo "DynamoDB table does not exist yet — will be created by apply."
-          fi
-
-      - name: Import existing IAM role + policy attachment if present
-        shell: bash
-        run: |
-          set -eu
-          ROLE_NAME="${{ inputs.project_name }}-gha"
-          if aws iam get-role --role-name "${ROLE_NAME}" >/dev/null 2>&1; then
-            echo "IAM role exists; importing: ${ROLE_NAME}"
-            terraform -chdir=./bootstrap import -input=false aws_iam_role.github_actions "${ROLE_NAME}" || true
-            ATTACH_ID="${ROLE_NAME}/arn:aws:iam::aws:policy/AdministratorAccess"
-            echo "Importing role policy attachment: ${ATTACH_ID}"
-            terraform -chdir=./bootstrap import -input=false aws_iam_role_policy_attachment.gha_admin "${ATTACH_ID}" || true
-          else
-            echo "IAM role does not exist yet — will be created by apply."
-          fi
-
-      ###############################################################
-      # Apply bootstrap (idempotent after imports)
-      ###############################################################
-      - name: Terraform Apply (bootstrap)
-        working-directory: ./bootstrap
-        run: terraform apply -auto-approve -input=false
-
-      - name: Show outputs
-        working-directory: ./bootstrap
-        run: terraform output
-
-----------------------------------------
-filename: ./.github/workflows/05-pr-quality-gate.yml
-content:
-# .github/workflows/05-pr-quality-gate.yml
-###############################################################
-# 05 - PR Quality Gate (fmt → validate → TFLint → Checkov → Plan)
-#  - Runs on PRs to any branch
-#  - Uses OIDC for AWS (no apply)
-#  - Uploads tfplan + Checkov SARIF as artifacts
-###############################################################
-name: 05 - PR Quality Gate
-
-on:
-  pull_request:
-    branches: ["**"]
-
-permissions:
-  id-token: write
-  contents: read
-  pull-requests: write
-
-concurrency:
-  group: pr-quality-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
-jobs:
-  pr-quality:
-    runs-on: ubuntu-latest
-
-    steps:
-      # -------------------- Checkout --------------------
-      - name: Checkout repository code
-        uses: actions/checkout@v5
-
-      # -------------------- Preflight --------------------
-      - name: Preflight — verify Variables
-        shell: bash
-        run: |
-          set -eu
-          [ -n "${{ vars.AWS_REGION }}" ] || { echo "Missing variable: AWS_REGION"; exit 1; }
-          [ -n "${{ vars.AWS_ROLE_ARN }}" ] || { echo "Missing variable: AWS_ROLE_ARN"; exit 1; }
-          [ -n "${{ vars.TF_STATE_BUCKET }}" ] || { echo "Missing variable: TF_STATE_BUCKET"; exit 1; }
-          [ -n "${{ vars.TF_STATE_TABLE }}" ] || { echo "Missing variable: TF_STATE_TABLE"; exit 1; }
-          [ -n "${{ vars.TF_STATE_KEY }}" ] || { echo "Missing variable: TF_STATE_KEY"; exit 1; }
-          if [[ ! "${{ vars.AWS_REGION }}" =~ ^[a-z]+-[a-z]+-[0-9]+$ ]]; then
-            echo "Invalid AWS_REGION: '${{ vars.AWS_REGION }}'"; exit 1
-          fi
-          echo "Preflight OK."
-
-      # -------------------- Terraform CLI --------------------
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.13.3
-
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v5
-        with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-          role-session-name: gha-pr-${{ github.run_id }}
-
-      - name: Terraform Init (S3 backend via Variables; no lock/refresh during PR)
-        run: |
-          terraform init -input=false \
-            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
-            -backend-config="key=${{ vars.TF_STATE_KEY }}" \
-            -backend-config="region=${{ vars.AWS_REGION }}" \
-            -backend-config="dynamodb_table=${{ vars.TF_STATE_TABLE }}" \
-            -backend-config="encrypt=true"
-
-      # -------------------- fmt + validate --------------------
-      - name: Terraform fmt (check only)
-        run: terraform fmt -check -recursive
-
-      - name: Terraform validate
-        env:
-          TF_VAR_region: ${{ vars.AWS_REGION }}
-        run: terraform validate
-
-      # -------------------- TFLint --------------------
-      - name: Setup TFLint
-        uses: terraform-linters/setup-tflint@v5
-        with:
-          tflint_version: v0.59.1
-
-      - name: TFLint init & run
-        run: |
-          tflint --init
-          tflint -f compact
-
-      # -------------------- Checkov (CLI ONLY, non-blocking) --------------------
-      - name: Setup Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
-
-      - name: Install Checkov
-        run: pip install --quiet "checkov==3.2.474"
-
-      - name: Run Checkov (SARIF output, non-blocking, env sanitized)
-        shell: bash
-        continue-on-error: true
-        run: |
-          set -euo pipefail
-          # Show what "checkov" resolves to (helps diagnose PATH clashes)
-          type -a checkov || true
-          python - <<'PY'
-          # Remove any envs that might inject a bad --soft_fail flag via wrappers
-          unset INPUT_SOFT_FAIL || true
-          unset SOFT_FAIL || true
-          unset CHECKOV_SOFT_FAIL || true
-          mkdir -p reports
-          # Call the module directly to bypass any shell wrappers
-          python -m checkov -d . --framework terraform --quiet \
-            --output sarif --output-file-path reports/checkov.sarif
-
-      - name: Upload Checkov SARIF (artifact)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: checkov-sarif
-          path: reports/checkov.sarif
-          retention-days: 7
-
-      # -------------------- Plan (safe) --------------------
-      - name: Terraform plan (safe for PRs)
-        env:
-          TF_VAR_region: ${{ vars.AWS_REGION }}
-        run: terraform plan -input=false -no-color -lock=false -refresh=false -out=tfplan.bin
-
-      - name: Upload plan artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: tfplan-pr-${{ github.event.pull_request.number }}
-          path: tfplan.bin
-          retention-days: 7
-
-----------------------------------------
-filename: ./.github/workflows/05-pr-quality.yml
-content:
-###############################################################
-# 05 - PR Quality Gate (fmt → validate → TFLint → Checkov → Plan)
-# Purpose:
-#  - Fast feedback for *pull requests* (no apply).
-#  - Uses OIDC to read AWS (no long-lived keys).
-#  - Uploads a Terraform plan artifact for reviewers.
-# Notes:
-#  - Requires repo Variables set by bootstrap:
-#    AWS_REGION, AWS_ROLE_ARN, TF_STATE_BUCKET, TF_STATE_TABLE, TF_STATE_KEY
-###############################################################
-
-name: 05 - PR Quality Gate # Name seen in Actions UI
-
-on: # ───────── Triggers for this workflow ─────────
-    pull_request: # Run on PR events only (opened, synchronize, etc.)
-        branches: # ← ENFORCES: which *target* branches allow this workflow
-            - develop #    run when PR targets develop (normal dev flow)
-            - main #    run when PR targets main (e.g., hotfix or final release)
-            - release/* #    run when PR targets any release/* branch
-            - hotfix/* #    run when PR targets any hotfix/* branch
-
-permissions: # ───────── Token permissions ─────────
-    id-token: write # OIDC → AWS STS
-    contents: read # Read code
-    pull-requests: write # (Optional) comment/annotate PRs
-
-concurrency: # ───────── Avoid duplicate PR runs ─────────
-    group: pr-quality-${{ github.event.pull_request.number }}
-    cancel-in-progress: true
-
-jobs:
-    pr-quality:
-        runs-on: ubuntu-latest
-
-        steps:
-            - name: Checkout repo
-              uses: actions/checkout@v5 # Stable latest major
-
-            ###############################################################
-            # Preflight — verify Variables
-            ###############################################################
-            - name: Preflight — verify Variables
-              shell: bash
-              run: |
-                  set -eu
-                  [ -n "${{ vars.AWS_REGION }}" ] || { echo "Missing variable: AWS_REGION"; exit 1; }
-                  [ -n "${{ vars.AWS_ROLE_ARN }}" ] || { echo "Missing variable: AWS_ROLE_ARN"; exit 1; }
-                  [ -n "${{ vars.TF_STATE_BUCKET }}" ] || { echo "Missing variable: TF_STATE_BUCKET"; exit 1; }
-                  [ -n "${{ vars.TF_STATE_TABLE }}" ] || { echo "Missing variable: TF_STATE_TABLE"; exit 1; }
-                  [ -n "${{ vars.TF_STATE_KEY }}" ] || { echo "Missing variable: TF_STATE_KEY"; exit 1; }
-                  if [[ ! "${{ vars.AWS_REGION }}" =~ ^[a-z]+-[a-z]+-[0-9]+$ ]]; then
-                    echo "Invalid AWS_REGION: '${{ vars.AWS_REGION }}'"; exit 1
-                  fi
-                  echo "Preflight OK."
-
-            - name: Setup Terraform
-              uses: hashicorp/setup-terraform@v3
-              with:
-                  terraform_version: 1.13.3 # Latest stable TF
-
-            - name: Configure AWS credentials (OIDC)
-              uses: aws-actions/configure-aws-credentials@v5
-              with:
-                  role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-                  aws-region: ${{ vars.AWS_REGION }}
-                  role-session-name: gha-pr-${{ github.run_id }}
-
-            - name: Terraform Init (S3 backend via Variables; no lock/refresh during PR)
-              run: |
-                  terraform init -input=false \
-                    -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
-                    -backend-config="key=${{ vars.TF_STATE_KEY }}" \
-                    -backend-config="region=${{ vars.AWS_REGION }}" \
-                    -backend-config="dynamodb_table=${{ vars.TF_STATE_TABLE }}" \
-                    -backend-config="encrypt=true"
-
-            ###############################################################
-            # FMT + VALIDATE
-            ###############################################################
-            - name: Terraform fmt (check only)
-              run: terraform fmt -check -recursive
-
-            - name: Terraform validate
-              env:
-                  TF_VAR_region: ${{ vars.AWS_REGION }}
-              run: terraform validate
-
-            ###############################################################
-            # TFLint (best-practice lints for AWS/Terraform)
-            ###############################################################
-            - name: Setup TFLint
-              uses: terraform-linters/setup-tflint@v5
-              with:
-                  tflint_version: v0.59.1
-
-            - name: TFLint init & run
-              run: |
-                  tflint --init
-                  tflint -f compact
-
-            ###############################################################
-            # Checkov (policy/security scan for Terraform)
-            ###############################################################
-            - name: Setup Python
-              uses: actions/setup-python@v6
-              with:
-                  python-version: "3.13"
-
-            - name: Install Checkov
-              run: pip install --quiet "checkov==3.2.474"
-
-            - name: Checkov scan (fail on findings)
-              run: checkov -d . --framework terraform
-
-            ###############################################################
-            # PLAN (no lock, no refresh) + upload artifact for reviewers
-            ###############################################################
-            - name: Terraform plan (safe for PRs)
-              env:
-                  TF_VAR_region: ${{ vars.AWS_REGION }}
-              run: terraform plan -input=false -no-color -lock=false -refresh=false -out=tfplan.bin
-
-            - name: Upload plan artifact
-              uses: actions/upload-artifact@v4
-              with:
-                  name: tfplan-pr-${{ github.event.pull_request.number }}
-                  path: tfplan.bin
-
-----------------------------------------
-filename: ./.github/workflows/10-terraform.yml
-content:
-###############################################################
-# 10 - Terraform (plan on branches, apply on main)
-# Purpose:
-#  - Plan on pushes to feature/*, develop, release/*, hotfix/*, and main.
-#  - Also plan on PRs into develop/main/release/*/hotfix/*.
-#  - Apply runs *only* on pushes to main (gated by environment).
-#  - Uses OIDC for AWS (no static keys).
-###############################################################
-
-name: 10 - Terraform (plan on branches, apply on main)
-
-on: # ───────── Triggers ─────────
-  push: # Run on pushes to these branches:
-    branches:
-      - main # ← ENFORCES: include main pushes (needed for apply)
-      - develop # ← ENFORCES: plan on pushes to develop
-      - feature/* # ← ENFORCES: plan on pushes to any feature/*
-      - release/* # ← ENFORCES: plan on pushes to any release/*
-      - hotfix/* # ← ENFORCES: plan on pushes to any hotfix/*
-  pull_request: # Run on PRs targeting these branches:
-    branches:
-      - develop # ← ENFORCES: PRs into develop trigger this workflow
-      - main # ← ENFORCES: PRs into main trigger this workflow
-      - release/* # ← ENFORCES: PRs into any release/*
-      - hotfix/* # ← ENFORCES: PRs into any hotfix/*
-
-permissions:
-  id-token: write
-  contents: read
-
-concurrency:
-  group: terraform-${{ github.ref_name }} # One run per branch
-  cancel-in-progress: true
-
-jobs:
-  tf:
-    runs-on: ubuntu-latest
-
-    # Apply is gated by a protected Environment named "production".
-    # Only set that environment when the event is a *push to main*.
-    environment: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && 'production' || '' }}
-    #                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    #                                  └─ ENFORCES: environment gates APPLY only for pushes to main
-
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v5
-
-      - name: Preflight — verify Variables (OIDC mode)
-        shell: bash
-        run: |
-          set -eu
-          [ -n "${{ vars.AWS_REGION }}" ]      || { echo "Missing variable: AWS_REGION"; exit 1; }
-          [ -n "${{ vars.AWS_ROLE_ARN }}" ]    || { echo "Missing variable: AWS_ROLE_ARN"; exit 1; }
-          [ -n "${{ vars.TF_STATE_BUCKET }}" ] || { echo "Missing variable: TF_STATE_BUCKET"; exit 1; }
-          [ -n "${{ vars.TF_STATE_TABLE }}" ] || { echo "Missing variable: TF_STATE_TABLE"; exit 1; }
-          [ -n "${{ vars.TF_STATE_KEY }}" ] || { echo "Missing variable: TF_STATE_KEY"; exit 1; }
-          if [[ ! "${{ vars.AWS_REGION }}" =~ ^[a-z]+-[a-z]+-[0-9]+$ ]]; then
-            echo "Invalid AWS_REGION: '${{ vars.AWS_REGION }}'"; exit 1
-            echo "Invalid AWS_REGION: '${{ vars.AWS_REGION }}'"; exit 1
-          fi
-          echo "Preflight OK."
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.13.3
-
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v5
-        uses: aws-actions/configure-aws-credentials@v5
-        with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-          role-session-name: gha-tf-${{ github.run_id }}
-
-      - name: Sanity — whoami
-        run: aws sts get-caller-identity
-
-      - name: Terraform Init (S3 backend only) + Workspace
-        shell: bash
-        run: |
-          terraform init -input=false             -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"             -backend-config="key=${{ vars.TF_STATE_KEY }}"             -backend-config="region=${{ vars.AWS_REGION }}"             -backend-config="dynamodb_table=${{ vars.TF_STATE_TABLE }}"             -backend-config="encrypt=true"
-
-          terraform workspace list || true
-          terraform workspace select "$WS" || terraform workspace new "$WS"
-
-      - name: Terraform fmt & validate & plan
-        env:
-          TF_VAR_region: ${{ vars.AWS_REGION }}
-        run: |
-          terraform fmt -check
-          terraform validate
-          terraform plan -input=false -no-color -lock=false -out=tfplan.bin
-
-      - name: Upload plan artifact (for non-main branches)
-        if: github.ref != 'refs/heads/main' # ← ENFORCES: skip artifact upload on main
-        uses: actions/upload-artifact@v4
-        with:
-          name: tfplan
-          path: tfplan.bin
-          retention-days: 7
-
-      - name: Terraform Apply (only on main; gated by environment)
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push' # ← ENFORCES: APPLY ONLY on pushes to main
-        env:
-          TF_VAR_region: ${{ vars.AWS_REGION }}
-        run: terraform apply -input=false -auto-approve -lock=false tfplan.bin
-
-----------------------------------------
-filename: ./.github/workflows/99-branch-protection-apply.yml
-content:
-name: 99 - Apply GitHub Branch Protections (manual)
-
-# This workflow is manually triggered to apply branch protection rules
-# It uses Terraform to manage GitHub branch protections as infrastructure
-on:
-    # Manual trigger only - requires user to manually run this workflow
-    # This is because branch protections are critical and should be applied deliberately
-    workflow_dispatch: {}
-
-# Permission settings for GitHub Actions
-permissions:
-    # Required for OIDC authentication with AWS
-    id-token: write
-    # Required to checkout code and read repository contents
-    contents: read
-
-jobs:
-    apply-bp:
-        # Execute on GitHub's latest Ubuntu runner
-        runs-on: ubuntu-latest
-
-        # Set default working directory to 'github' folder
-        # This assumes Terraform configurations are in ./github/ directory
-        defaults:
-            run:
-                working-directory: github
-
-        steps:
-            # Step 1: Checkout repository code
-            # Required to access Terraform configuration files
-            - name: Checkout
-              uses: actions/checkout@v5
-
-            # Step 2: Install and setup Terraform
-            # Uses HashiCorp's official setup action with specific version
-            - name: Setup Terraform
-              uses: hashicorp/setup-terraform@v3
-              with:
-                  # Pin to specific Terraform version for consistency
-                  terraform_version: 1.13.3
-
-            # Step 3: Configure AWS credentials using OIDC
-            # This is more secure than using long-lived access keys
-            - name: Configure AWS credentials (OIDC)
-              uses: aws-actions/configure-aws-credentials@v5
-              with:
-                  # AWS Role ARN stored in repository variables
-                  role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-                  # AWS region stored in repository variables
-                  aws-region: ${{ vars.AWS_REGION }}
-                  # Unique session name for audit purposes
-                  role-session-name: gha-bp-${{ github.run_id }}
-
-            # Step 4: Initialize Terraform with S3 backend
-            # Backend configuration uses variables for flexibility
-            - name: Terraform init (S3 backend via repo Variables)
-              run: |
-                  terraform init -input=false \
-                    # S3 bucket for storing Terraform state
-                    -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
-                    # Specific key for branch protection state file
-                    -backend-config="key=${{ vars.TF_STATE_KEY }}/github-branch-protection.tfstate" \
-                    # AWS region for S3 bucket
-                    -backend-config="region=${{ vars.AWS_REGION }}" \
-                    # DynamoDB table for state locking (prevents concurrent modifications)
-                    -backend-config="dynamodb_table=${{ vars.TF_STATE_TABLE }}" \
-                    # Enable encryption for state file at rest
-                    -backend-config="encrypt=true"
-
-            # Step 5: Generate Terraform plan for branch protections
-            # Specifically targets only branch protection resources
-            - name: Terraform plan (branch protections)
-              env:
-                  # GitHub token with admin permissions (stored in repository secrets)
-                  TF_VAR_github_token: ${{ secrets.GH_TOKEN_ADMIN }}
-                  # GitHub organization or username
-                  TF_VAR_github_owner: 'bond50'
-                  # Target repository name
-                  TF_VAR_repo_name: 'infra-web-apps-v3'
-              run: |
-                  terraform plan \
-                    # Target specific branch protection resources only
-                    -target=github_branch_protection.main \
-                    -target=github_branch_protection.develop \
-                    -target=github_branch_protection.release_star \
-                    -target=github_branch_protection.hotfix_star \
-                    # Save plan to file for later apply
-                    -out=bp.tfplan
-
-            # Step 6: Apply the Terraform plan
-            # This will actually create/update the branch protection rules
-            - name: Terraform apply (branch protections)
-              env:
-                  # Same environment variables as plan step for consistency
-                  TF_VAR_github_token: ${{ secrets.GH_TOKEN_ADMIN }}
-                  TF_VAR_github_owner: 'bond50'
-                  TF_VAR_repo_name: 'infra-web-apps-v3'
-              run: terraform apply -auto-approve bp.tfplan
-
-----------------------------------------
-filename: ./.pre-commit-config.yaml
-content:
-###############################################################
-# .pre-commit-config.yaml
-# Purpose:
-#  - Let devs catch issues locally before pushing (fmt/lint/scan).
-# Usage:
-#  - pip install pre-commit
-#  - pre-commit install
-#  - pre-commit run -a
-###############################################################
-repos:
-    # Terraform fmt via pre-commit hooks (simple wrapper)
-    - repo: https://github.com/antonbabenko/pre-commit-terraform
-      rev: v1.88.2 # pin a stable tag; update when needed
-      hooks:
-          - id: terraform_fmt
-          - id: terraform_validate
-          # TFLint via hook (optional; our CI already runs it)
-          - id: terraform_tflint
-            args: ['--args=--init'] # ensure plugins installed if enabled in .tflint.hcl
-
-    # Checkov via pre-commit hook (optional; CI already runs it)
-    - repo: https://github.com/bridgecrewio/checkov
-      rev: 3.2.474 # pin a stable release if you use the hook locally
-      hooks:
-          - id: checkov
-            args: ['-d', '.', '--framework', 'terraform']
-
-----------------------------------------
 filename: ./backend.tf
 content:
 ###############################################################
@@ -1067,119 +341,157 @@ content:
 data "aws_caller_identity" "current" {}
 
 ----------------------------------------
-filename: ./github/branch_protection.tf
-content:
-###############################################################
-# GitHub Branch Protection (Terraform-managed)
-# - Provider: integrations/github
-# - Patterns covered: main, develop, release/*, hotfix/*
-# - Requires a token with "repo:admin" scope when applying
-###############################################################
-
-locals {
-  # GitHub Actions job name used in your PR gate.
-  # This is the check name that shows on PRs.
-  pr_gate_context = "05 - PR Quality Gate / pr-quality"
-}
-
-# -------------------- MAIN (production, strict) --------------------
-resource "github_branch_protection" "main" {
-  repository_id                   = var.repo_name # you can pass the repo name directly
-  pattern                         = "main"
-  enforce_admins                  = true
-  allows_deletions                = false # block branch deletion
-  allows_force_pushes             = false # block force pushes
-  required_linear_history         = true
-  require_conversation_resolution = true # <-- from docs
-
-  required_status_checks {
-    strict   = true # branch must be up-to-date before merge
-    contexts = [local.pr_gate_context]
-  }
-
-  required_pull_request_reviews {
-    required_approving_review_count = 2
-    dismiss_stale_reviews           = true
-    require_code_owner_review       = true # set false if you don't use CODEOWNERS
-    require_last_push_approval      = true
-  }
-}
-
-# -------------------- DEVELOP (integration, strong) --------------------
-resource "github_branch_protection" "develop" {
-  repository_id                   = var.repo_name
-  pattern                         = "develop"
-  enforce_admins                  = true
-  allows_deletions                = false
-  allows_force_pushes             = false
-  required_linear_history         = true
-  require_conversation_resolution = true
-
-  required_status_checks {
-    strict   = false # up-to-date not strictly required on develop
-    contexts = [local.pr_gate_context]
-  }
-
-  required_pull_request_reviews {
-    required_approving_review_count = 1
-    dismiss_stale_reviews           = true
-    require_code_owner_review       = false
-    require_last_push_approval      = true
-  }
-}
-
-# -------------------- RELEASE/* (stabilization, like main) --------------------
-resource "github_branch_protection" "release_star" {
-  repository_id                   = var.repo_name
-  pattern                         = "release/*"
-  enforce_admins                  = true
-  allows_deletions                = false
-  allows_force_pushes             = false
-  required_linear_history         = true
-  require_conversation_resolution = true
-
-  required_status_checks {
-    strict   = true
-    contexts = [local.pr_gate_context]
-  }
-
-  required_pull_request_reviews {
-    required_approving_review_count = 2
-    dismiss_stale_reviews           = true
-    require_code_owner_review       = true
-    require_last_push_approval      = true
-  }
-}
-
-# -------------------- HOTFIX/* (urgent, fast but reviewed) --------------------
-resource "github_branch_protection" "hotfix_star" {
-  repository_id                   = var.repo_name
-  pattern                         = "hotfix/*"
-  enforce_admins                  = true
-  allows_deletions                = false
-  allows_force_pushes             = false
-  required_linear_history         = true
-  require_conversation_resolution = true
-
-  required_status_checks {
-    strict   = false
-    contexts = [local.pr_gate_context]
-  }
-
-  required_pull_request_reviews {
-    required_approving_review_count = 1
-    dismiss_stale_reviews           = true
-    require_code_owner_review       = false
-    require_last_push_approval      = true
-  }
-}
-
-----------------------------------------
 filename: ./github/providers.tf
 content:
 provider "github" {
   owner = var.github_owner
   token = var.github_token
+}
+
+----------------------------------------
+filename: ./github/rulesets.tf
+content:
+###############################################################
+# github/rulesets.tf  (Repository Rulesets)
+# Shows under: Settings → Rules → Rulesets
+# Enforcement: active (blocking). Use "evaluate" to dry-run.
+###############################################################
+
+locals {
+  pr_gate_context = "05 - PR Quality Gate / pr-quality"
+}
+
+# ===================== MAIN (production, strict) =====================
+resource "github_repository_ruleset" "main" {
+  name        = "main"
+  target      = "branch"
+  enforcement = "active"
+
+  conditions {
+    ref_name {
+      include = ["refs/heads/main"]
+      exclude = []
+    }
+  }
+
+  # single rules{} block; everything goes inside here
+  rules {
+    # Pull request requirements (supported fields)
+    pull_request {
+      required_approving_review_count = 2
+      dismiss_stale_reviews_on_push   = true
+      require_code_owner_review       = true
+      require_last_push_approval      = true
+      # NOTE: conversation resolution is not supported in rulesets (remove)
+    }
+
+    # Branch behaviors
+    required_linear_history = true
+    non_fast_forward        = true # block force-pushes
+    deletion                = true # block deletion
+
+    # Status checks (use required_check blocks)
+    required_status_checks {
+      strict_required_status_checks_policy = true
+      required_check { context = local.pr_gate_context }
+    }
+  }
+}
+
+# ===================== DEVELOP (integration, strong) =====================
+resource "github_repository_ruleset" "develop" {
+  name        = "develop"
+  target      = "branch"
+  enforcement = "active"
+
+  conditions {
+    ref_name {
+      include = ["refs/heads/develop"]
+      exclude = []
+    }
+  }
+
+  rules {
+    pull_request {
+      required_approving_review_count = 1
+      dismiss_stale_reviews_on_push   = true
+      require_code_owner_review       = false
+      require_last_push_approval      = true
+    }
+
+    required_linear_history = true
+    non_fast_forward        = true
+    deletion                = true
+
+    required_status_checks {
+      strict_required_status_checks_policy = false
+      required_check { context = local.pr_gate_context }
+    }
+  }
+}
+
+# ===================== RELEASE/* (like main) =====================
+resource "github_repository_ruleset" "release_star" {
+  name        = "release/*"
+  target      = "branch"
+  enforcement = "active"
+
+  conditions {
+    ref_name {
+      include = ["refs/heads/release/*"]
+      exclude = []
+    }
+  }
+
+  rules {
+    pull_request {
+      required_approving_review_count = 2
+      dismiss_stale_reviews_on_push   = true
+      require_code_owner_review       = true
+      require_last_push_approval      = true
+    }
+
+    required_linear_history = true
+    non_fast_forward        = true
+    deletion                = true
+
+    required_status_checks {
+      strict_required_status_checks_policy = true
+      required_check { context = local.pr_gate_context }
+    }
+  }
+}
+
+# ===================== HOTFIX/* (fast but reviewed) =====================
+resource "github_repository_ruleset" "hotfix_star" {
+  name        = "hotfix/*"
+  target      = "branch"
+  enforcement = "active"
+
+  conditions {
+    ref_name {
+      include = ["refs/heads/hotfix/*"]
+      exclude = []
+    }
+  }
+
+  rules {
+    pull_request {
+      required_approving_review_count = 1
+      dismiss_stale_reviews_on_push   = true
+      require_code_owner_review       = false
+      require_last_push_approval      = true
+    }
+
+    required_linear_history = true
+    non_fast_forward        = true
+    deletion                = true
+
+    required_status_checks {
+      strict_required_status_checks_policy = false
+      required_check { context = local.pr_gate_context }
+    }
+  }
 }
 
 ----------------------------------------
