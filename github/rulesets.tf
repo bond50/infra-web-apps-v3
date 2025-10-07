@@ -1,7 +1,7 @@
 ###############################################################
 # github/rulesets.tf  (Repository Rulesets)
 # Shows under: Settings → Rules → Rulesets
-# Enforcement: active (blocking). Use "evaluate" to dry-run.
+# NOTE: release/* has no required_status_checks so initial push works.
 ###############################################################
 
 locals {
@@ -13,7 +13,7 @@ resource "github_repository_ruleset" "main" {
   repository  = var.repo_name
   name        = "main"
   target      = "branch"
-  enforcement = "evaluate"
+  enforcement = "active"
 
   conditions {
     ref_name {
@@ -46,7 +46,7 @@ resource "github_repository_ruleset" "develop" {
   repository  = var.repo_name
   name        = "develop"
   target      = "branch"
-  enforcement = "evaluate"
+  enforcement = "active"
 
   conditions {
     ref_name {
@@ -74,12 +74,12 @@ resource "github_repository_ruleset" "develop" {
   }
 }
 
-# ===================== RELEASE/* (like main) =====================
+# ===================== RELEASE/* (relaxed for branch creation) =====================
 resource "github_repository_ruleset" "release_star" {
   repository  = var.repo_name
   name        = "release/*"
   target      = "branch"
-  enforcement = "evaluate"
+  enforcement = "active"
 
   conditions {
     ref_name {
@@ -96,11 +96,9 @@ resource "github_repository_ruleset" "release_star" {
       require_last_push_approval      = true
     }
 
-
-    non_fast_forward        = true
-    deletion                = true
-
-    }
+    # NOTE: no required_linear_history and no required_status_checks here
+    non_fast_forward = true
+    deletion         = true
   }
 }
 
@@ -109,7 +107,7 @@ resource "github_repository_ruleset" "hotfix_star" {
   repository  = var.repo_name
   name        = "hotfix/*"
   target      = "branch"
-  enforcement = "evaluate"
+  enforcement = "active"
 
   conditions {
     ref_name {
