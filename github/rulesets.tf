@@ -1,13 +1,21 @@
 ###############################################################
-# github/rulesets.tf  (Repository Rulesets)
-# Enforcement: active (blocking)
+# Final Repo Rulesets
+# - 1 approval on main & develop
+# - block force-push & deletion on main/develop
+# - keep history linear on main/develop (squash merges OK)
+# - require only the PR Quality Gate; NOT strict (avoids "expected" hangs)
 ###############################################################
 
+# locals {
+#   pr_gate_context = "05 - PR Quality Gate / pr-quality"
+# }
+
 locals {
-  pr_gate_context = "05 - PR Quality Gate / pr-quality"
+  # Match the exact name reported by GitHub Actions for a pull_request event
+  pr_gate_context = "05 - PR Quality Gate / pr-quality (pull_request)"
 }
 
-# ===================== MAIN =====================
+# ---- MAIN ----
 resource "github_repository_ruleset" "main" {
   repository  = var.repo_name
   name        = "main"
@@ -23,9 +31,9 @@ resource "github_repository_ruleset" "main" {
 
   rules {
     pull_request {
-      required_approving_review_count = 2
+      required_approving_review_count = 1
       dismiss_stale_reviews_on_push   = true
-      require_code_owner_review       = true
+      require_code_owner_review       = false
       require_last_push_approval      = true
     }
 
@@ -34,13 +42,13 @@ resource "github_repository_ruleset" "main" {
     deletion                = true
 
     required_status_checks {
-      strict_required_status_checks_policy = true
+      strict_required_status_checks_policy = false
       required_check { context = local.pr_gate_context }
     }
   }
 }
 
-# ===================== DEVELOP =====================
+# ---- DEVELOP ----
 resource "github_repository_ruleset" "develop" {
   repository  = var.repo_name
   name        = "develop"
@@ -59,70 +67,7 @@ resource "github_repository_ruleset" "develop" {
       required_approving_review_count = 1
       dismiss_stale_reviews_on_push   = true
       require_code_owner_review       = false
-      require_last_push_approval      = true
-    }
-
-    required_linear_history = true
-    non_fast_forward        = true
-    deletion                = true
-
-    required_status_checks {
-      strict_required_status_checks_policy = true
-      required_check { context = local.pr_gate_context }
-    }
-  }
-}
-
-# ===================== RELEASE/* (stabilization) =====================
-# NOTE: relaxed so you can create the first release branch:
-# - NO required_linear_history
-# - NO required_status_checks
-resource "github_repository_ruleset" "release_star" {
-  repository  = var.repo_name
-  name        = "release/*"
-  target      = "branch"
-  enforcement = "active"
-
-  conditions {
-    ref_name {
-      include = ["refs/heads/release/*"]
-      exclude = []
-    }
-  }
-
-  rules {
-    pull_request {
-      required_approving_review_count = 1
-      dismiss_stale_reviews_on_push   = true
-      require_code_owner_review       = false
-      require_last_push_approval      = true
-    }
-
-    non_fast_forward = true
-    deletion         = true
-  }
-}
-
-# ===================== HOTFIX/* (urgent) =====================
-resource "github_repository_ruleset" "hotfix_star" {
-  repository  = var.repo_name
-  name        = "hotfix/*"
-  target      = "branch"
-  enforcement = "active"
-
-  conditions {
-    ref_name {
-      include = ["refs/heads/hotfix/*"]
-      exclude = []
-    }
-  }
-
-  rules {
-    pull_request {
-      required_approving_review_count = 1
-      dismiss_stale_reviews_on_push   = true
-      require_code_owner_review       = false
-      require_last_push_approval      = true
+      require_last_push_approval      = false
     }
 
     required_linear_history = true
