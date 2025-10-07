@@ -97,8 +97,8 @@ resource "github_repository_ruleset" "release_star" {
     }
 
     # required_linear_history = true  # TEMP disabled
-    non_fast_forward        = true
-    deletion                = true
+    non_fast_forward = true
+    deletion         = true
 
     required_status_checks {
       strict_required_status_checks_policy = false
