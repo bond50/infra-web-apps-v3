@@ -1,14 +1,13 @@
 ###############################################################
-# github/rulesets.tf
-# Valid HCL. Uses "active" (GitHub Free/Pro—no "evaluate" support).
-# release/* is relaxed (no required_status_checks) so the first push works.
+# github/rulesets.tf  (Repository Rulesets)
+# Enforcement: active (blocking)
 ###############################################################
 
 locals {
   pr_gate_context = "05 - PR Quality Gate / pr-quality"
 }
 
-# ===================== MAIN =====================
+# ===================== MAIN (production, strict) =====================
 resource "github_repository_ruleset" "main" {
   repository  = var.repo_name
   name        = "main"
@@ -41,7 +40,7 @@ resource "github_repository_ruleset" "main" {
   }
 }
 
-# ===================== DEVELOP =====================
+# ===================== DEVELOP (integration, strong) =====================
 resource "github_repository_ruleset" "develop" {
   repository  = var.repo_name
   name        = "develop"
@@ -74,7 +73,10 @@ resource "github_repository_ruleset" "develop" {
   }
 }
 
-# ===================== RELEASE/* =====================
+# ===================== RELEASE/* (stabilization) =====================
+# NOTE: relaxed so you can create the first release branch:
+# - NO required_linear_history
+# - NO required_status_checks
 resource "github_repository_ruleset" "release_star" {
   repository  = var.repo_name
   name        = "release/*"
@@ -90,19 +92,18 @@ resource "github_repository_ruleset" "release_star" {
 
   rules {
     pull_request {
-      required_approving_review_count = 1
+      required_approving_review_count = 2
       dismiss_stale_reviews_on_push   = true
-      require_code_owner_review       = false
+      require_code_owner_review       = true
       require_last_push_approval      = true
     }
 
-    # Intentionally NO required_status_checks for first-time branch creation
     non_fast_forward = true
     deletion         = true
   }
 }
 
-# ===================== HOTFIX/* =====================
+# ===================== HOTFIX/* (urgent) =====================
 resource "github_repository_ruleset" "hotfix_star" {
   repository  = var.repo_name
   name        = "hotfix/*"
