@@ -1,19 +1,19 @@
 ###############################################################
-# github/rulesets.tf  (Repository Rulesets)
-# Shows under: Settings → Rules → Rulesets
-# Enforcement: active (blocking). Use "evaluate" to dry-run.
+# github/rulesets.tf
+# Valid HCL. Uses "active" (GitHub Free/Pro—no "evaluate" support).
+# release/* is relaxed (no required_status_checks) so the first push works.
 ###############################################################
 
 locals {
   pr_gate_context = "05 - PR Quality Gate / pr-quality"
 }
 
-# ===================== MAIN (production, strict) =====================
+# ===================== MAIN =====================
 resource "github_repository_ruleset" "main" {
   repository  = var.repo_name
   name        = "main"
   target      = "branch"
-  enforcement = "evaluate"
+  enforcement = "active"
 
   conditions {
     ref_name {
@@ -41,12 +41,12 @@ resource "github_repository_ruleset" "main" {
   }
 }
 
-# ===================== DEVELOP (integration, strong) =====================
+# ===================== DEVELOP =====================
 resource "github_repository_ruleset" "develop" {
   repository  = var.repo_name
   name        = "develop"
   target      = "branch"
-  enforcement = "evaluate"
+  enforcement = "active"
 
   conditions {
     ref_name {
@@ -74,12 +74,12 @@ resource "github_repository_ruleset" "develop" {
   }
 }
 
-# ===================== RELEASE/* (like main) =====================
+# ===================== RELEASE/* =====================
 resource "github_repository_ruleset" "release_star" {
   repository  = var.repo_name
   name        = "release/*"
   target      = "branch"
-  enforcement = "evaluate"
+  enforcement = "active"
 
   conditions {
     ref_name {
@@ -90,26 +90,24 @@ resource "github_repository_ruleset" "release_star" {
 
   rules {
     pull_request {
-      required_approving_review_count = 2
+      required_approving_review_count = 1
       dismiss_stale_reviews_on_push   = true
-      require_code_owner_review       = true
+      require_code_owner_review       = false
       require_last_push_approval      = true
     }
 
-
-    non_fast_forward        = true
-    deletion                = true
-
-    }
+    # Intentionally NO required_status_checks for first-time branch creation
+    non_fast_forward = true
+    deletion         = true
   }
 }
 
-# ===================== HOTFIX/* (fast but reviewed) =====================
+# ===================== HOTFIX/* =====================
 resource "github_repository_ruleset" "hotfix_star" {
   repository  = var.repo_name
   name        = "hotfix/*"
   target      = "branch"
-  enforcement = "evaluate"
+  enforcement = "active"
 
   conditions {
     ref_name {
