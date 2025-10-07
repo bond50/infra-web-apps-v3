@@ -5,7 +5,6 @@
 # - keep history linear on main/develop (squash merges OK)
 # - require only the PR Quality Gate; NOT strict (avoids "expected" hangs)
 ###############################################################
-
 # locals {
 #   pr_gate_context = "05 - PR Quality Gate / pr-quality"
 # }
