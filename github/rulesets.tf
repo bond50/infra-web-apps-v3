@@ -14,7 +14,7 @@ locals {
   pr_gate_context = "05 - PR Quality Gate / pr-quality (pull_request)"
 }
 
-# ---- MAIN ----
+# ---- MAIN BRANCH----
 resource "github_repository_ruleset" "main" {
   repository  = var.repo_name
   name        = "main"
@@ -47,7 +47,7 @@ resource "github_repository_ruleset" "main" {
   }
 }
 
-# ---- DEVELOP ----
+# ---- DEVELOP BRANCH----
 resource "github_repository_ruleset" "develop" {
   repository  = var.repo_name
   name        = "develop"
