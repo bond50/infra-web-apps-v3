@@ -13,7 +13,7 @@ resource "github_repository_ruleset" "main" {
   repository  = var.repo_name
   name        = "main"
   target      = "branch"
-  enforcement = "active"
+  enforcement = "evaluate"
 
   conditions {
     ref_name {
@@ -46,7 +46,7 @@ resource "github_repository_ruleset" "develop" {
   repository  = var.repo_name
   name        = "develop"
   target      = "branch"
-  enforcement = "active"
+  enforcement = "evaluate"
 
   conditions {
     ref_name {
@@ -79,7 +79,7 @@ resource "github_repository_ruleset" "release_star" {
   repository  = var.repo_name
   name        = "release/*"
   target      = "branch"
-  enforcement = "active"
+  enforcement = "evaluate"
 
   conditions {
     ref_name {
@@ -112,7 +112,7 @@ resource "github_repository_ruleset" "hotfix_star" {
   repository  = var.repo_name
   name        = "hotfix/*"
   target      = "branch"
-  enforcement = "active"
+  enforcement = "evaluate"
 
   conditions {
     ref_name {
