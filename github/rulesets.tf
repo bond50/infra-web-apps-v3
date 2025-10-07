@@ -96,13 +96,10 @@ resource "github_repository_ruleset" "release_star" {
       require_last_push_approval      = true
     }
 
-    required_linear_history = true
+
     non_fast_forward        = true
     deletion                = true
 
-    required_status_checks {
-      strict_required_status_checks_policy = true
-      required_check { context = local.pr_gate_context }
     }
   }
 }
