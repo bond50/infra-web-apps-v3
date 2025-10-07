@@ -1,98 +1,93 @@
 name: 99 - Apply GitHub Branch Protections (manual)
 
-# This workflow is manually triggered to apply branch protection rules
-# It uses Terraform to manage GitHub branch protections as infrastructure
 on:
-    # Manual trigger only - requires user to manually run this workflow
-    # This is because branch protections are critical and should be applied deliberately
-    workflow_dispatch: {}
+  workflow_dispatch: {}
 
-# Permission settings for GitHub Actions
 permissions:
-    # Required for OIDC authentication with AWS
-    id-token: write
-    # Required to checkout code and read repository contents
-    contents: read
+  id-token: write
+  contents: read
 
 jobs:
-    apply-bp:
-        # Execute on GitHub's latest Ubuntu runner
-        runs-on: ubuntu-latest
+  apply-bp:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: github # run TF from ./github
 
-        # Set default working directory to 'github' folder
-        # This assumes Terraform configurations are in ./github/ directory
-        defaults:
-            run:
-                working-directory: github
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
 
-        steps:
-            # Step 1: Checkout repository code
-            # Required to access Terraform configuration files
-            - name: Checkout
-              uses: actions/checkout@v5
+      # Fail fast if any required repo Variables are missing/empty
+      - name: Preflight — verify Variables
+        shell: bash
+        run: |
+          set -euo pipefail
+          req=(AWS_REGION AWS_ROLE_ARN TF_STATE_BUCKET TF_STATE_TABLE TF_STATE_KEY)
+          for v in "${req[@]}"; do
+            val="${{ vars.AWS_REGION }}"
+            case "$v" in
+              AWS_REGION)       val="${{ vars.AWS_REGION }}";;
+              AWS_ROLE_ARN)     val="${{ vars.AWS_ROLE_ARN }}";;
+              TF_STATE_BUCKET)  val="${{ vars.TF_STATE_BUCKET }}";;
+              TF_STATE_TABLE)   val="${{ vars.TF_STATE_TABLE }}";;
+              TF_STATE_KEY)     val="${{ vars.TF_STATE_KEY }}";;
+            esac
+            if [ -z "$val" ]; then
+              echo "Missing variable: $v"; exit 1
+            fi
+          done
+          if [[ ! "${{ vars.AWS_REGION }}" =~ ^[a-z]+-[a-z]+-[0-9]+$ ]]; then
+            echo "Invalid AWS_REGION: '${{ vars.AWS_REGION }}'"; exit 1
+          fi
+          echo "Preflight OK."
 
-            # Step 2: Install and setup Terraform
-            # Uses HashiCorp's official setup action with specific version
-            - name: Setup Terraform
-              uses: hashicorp/setup-terraform@v3
-              with:
-                  # Pin to specific Terraform version for consistency
-                  terraform_version: 1.13.3
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.3
 
-            # Step 3: Configure AWS credentials using OIDC
-            # This is more secure than using long-lived access keys
-            - name: Configure AWS credentials (OIDC)
-              uses: aws-actions/configure-aws-credentials@v5
-              with:
-                  # AWS Role ARN stored in repository variables
-                  role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-                  # AWS region stored in repository variables
-                  aws-region: ${{ vars.AWS_REGION }}
-                  # Unique session name for audit purposes
-                  role-session-name: gha-bp-${{ github.run_id }}
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: gha-bp-${{ github.run_id }}
 
-            # Step 4: Initialize Terraform with S3 backend
-            # Backend configuration uses variables for flexibility
-            - name: Terraform init (S3 backend via repo Variables)
-              run: |
-                  terraform init -input=false \
-                    # S3 bucket for storing Terraform state
-                    -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
-                    # Specific key for branch protection state file
-                    -backend-config="key=${{ vars.TF_STATE_KEY }}/github-branch-protection.tfstate" \
-                    # AWS region for S3 bucket
-                    -backend-config="region=${{ vars.AWS_REGION }}" \
-                    # DynamoDB table for state locking (prevents concurrent modifications)
-                    -backend-config="dynamodb_table=${{ vars.TF_STATE_TABLE }}" \
-                    # Enable encryption for state file at rest
-                    -backend-config="encrypt=true"
+      # Use a backend.hcl so we don't fight quoting/empty vars
+      - name: Terraform init (S3 backend via Variables)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > backend.hcl <<EOF
+          bucket         = "${{ vars.TF_STATE_BUCKET }}"
+          key            = "${{ vars.TF_STATE_KEY }}/github-branch-protection.tfstate"
+          region         = "${{ vars.AWS_REGION }}"
+          dynamodb_table = "${{ vars.TF_STATE_TABLE }}"
+          encrypt        = true
+          EOF
+          echo "backend.hcl:"
+          cat backend.hcl
+          terraform init -input=false -backend-config=backend.hcl
 
-            # Step 5: Generate Terraform plan for branch protections
-            # Specifically targets only branch protection resources
-            - name: Terraform plan (branch protections)
-              env:
-                  # GitHub token with admin permissions (stored in repository secrets)
-                  TF_VAR_github_token: ${{ secrets.GH_TOKEN_ADMIN }}
-                  # GitHub organization or username
-                  TF_VAR_github_owner: 'bond50'
-                  # Target repository name
-                  TF_VAR_repo_name: 'infra-web-apps-v3'
-              run: |
-                  terraform plan \
-                    # Target specific branch protection resources only
-                    -target=github_branch_protection.main \
-                    -target=github_branch_protection.develop \
-                    -target=github_branch_protection.release_star \
-                    -target=github_branch_protection.hotfix_star \
-                    # Save plan to file for later apply
-                    -out=bp.tfplan
+      - name: Terraform plan (branch protections)
+        env:
+          TF_VAR_github_token: ${{ secrets.GH_TOKEN_ADMIN }}
+          TF_VAR_github_owner: "bond50"
+          TF_VAR_repo_name: "infra-web-apps-v3"
+        run: |
+          terraform fmt -check
+          terraform validate
+          terraform plan \
+            -target=github_branch_protection.main \
+            -target=github_branch_protection.develop \
+            -target=github_branch_protection.release_star \
+            -target=github_branch_protection.hotfix_star \
+            -out=bp.tfplan
 
-            # Step 6: Apply the Terraform plan
-            # This will actually create/update the branch protection rules
-            - name: Terraform apply (branch protections)
-              env:
-                  # Same environment variables as plan step for consistency
-                  TF_VAR_github_token: ${{ secrets.GH_TOKEN_ADMIN }}
-                  TF_VAR_github_owner: 'bond50'
-                  TF_VAR_repo_name: 'infra-web-apps-v3'
-              run: terraform apply -auto-approve bp.tfplan
+      - name: Terraform apply (branch protections)
+        env:
+          TF_VAR_github_token: ${{ secrets.GH_TOKEN_ADMIN }}
+          TF_VAR_github_owner: "bond50"
+          TF_VAR_repo_name: "infra-web-apps-v3"
+        run: terraform apply -auto-approve bp.tfplan
