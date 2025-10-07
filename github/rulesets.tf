@@ -79,7 +79,7 @@ resource "github_repository_ruleset" "release_star" {
   repository  = var.repo_name
   name        = "release/*"
   target      = "branch"
-  enforcement = "evaluate"
+  enforcement = "active"
 
   conditions {
     ref_name {
