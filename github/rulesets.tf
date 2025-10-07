@@ -10,6 +10,7 @@ locals {
 
 # ===================== MAIN (production, strict) =====================
 resource "github_repository_ruleset" "main" {
+  repository  = var.repo_name
   name        = "main"
   target      = "branch"
   enforcement = "active"
@@ -21,23 +22,18 @@ resource "github_repository_ruleset" "main" {
     }
   }
 
-  # single rules{} block; everything goes inside here
   rules {
-    # Pull request requirements (supported fields)
     pull_request {
       required_approving_review_count = 2
       dismiss_stale_reviews_on_push   = true
       require_code_owner_review       = true
       require_last_push_approval      = true
-      # NOTE: conversation resolution is not supported in rulesets (remove)
     }
 
-    # Branch behaviors
     required_linear_history = true
-    non_fast_forward        = true # block force-pushes
-    deletion                = true # block deletion
+    non_fast_forward        = true
+    deletion                = true
 
-    # Status checks (use required_check blocks)
     required_status_checks {
       strict_required_status_checks_policy = true
       required_check { context = local.pr_gate_context }
@@ -47,6 +43,7 @@ resource "github_repository_ruleset" "main" {
 
 # ===================== DEVELOP (integration, strong) =====================
 resource "github_repository_ruleset" "develop" {
+  repository  = var.repo_name
   name        = "develop"
   target      = "branch"
   enforcement = "active"
@@ -79,6 +76,7 @@ resource "github_repository_ruleset" "develop" {
 
 # ===================== RELEASE/* (like main) =====================
 resource "github_repository_ruleset" "release_star" {
+  repository  = var.repo_name
   name        = "release/*"
   target      = "branch"
   enforcement = "active"
@@ -111,6 +109,7 @@ resource "github_repository_ruleset" "release_star" {
 
 # ===================== HOTFIX/* (fast but reviewed) =====================
 resource "github_repository_ruleset" "hotfix_star" {
+  repository  = var.repo_name
   name        = "hotfix/*"
   target      = "branch"
   enforcement = "active"
