@@ -44,10 +44,24 @@ jobs:
             -backend-config="region=${{ vars.AWS_REGION }}" \
             -backend-config="dynamodb_table=${{ vars.TF_STATE_TABLE }}" \
             -backend-config="encrypt=true"
+      # === ADDED: Pre-import repository so TF manages existing repo instead of creating it ===
+      - name: Pre-import repository (squash-only settings)
+        env:
+          TF_VAR_github_owner: ${{ github.repository_owner }}
+          TF_VAR_github_token: ${{ secrets.GH_TOKEN_ADMIN }} # provider token for import
+        run: |
+          set -euo pipefail
+          # Import only if it's not already in state.
+          terraform state show github_repository.repo >/dev/null 2>&1 || \
+            terraform import -input=false github_repository.repo "${{ github.event.repository.name }}"
+          # NOTE: Import ID is the repo *name* only; owner is provided by the provider config.
 
       # NEW: Auto-import any existing rulesets by name so TF won't try to recreate them
       - name: Pre-import existing rulesets (by name)
         shell: bash
+        env: # CHANGED: pass TF vars so provider is authenticated
+          TF_VAR_github_owner: ${{ github.repository_owner }}
+          TF_VAR_github_token: ${{ secrets.GH_TOKEN_ADMIN }}
         run: |
           set -euo pipefail
           declare -A MAP=(
