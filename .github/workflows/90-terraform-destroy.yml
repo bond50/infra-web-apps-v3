@@ -1,0 +1,120 @@
+name: 90 - Terraform Destroy (manual)
+
+on:
+    workflow_dispatch:
+        inputs:
+            confirm:
+                description: "Type: I UNDERSTAND THIS WILL DESTROY ALL RESOURCES"
+                required: true
+            workspace:
+                description: "Terraform workspace to destroy (e.g., default/prod/staging)"
+                required: false
+                default: "default"
+            directory:
+                description: "Directory where Terraform root module lives"
+                required: false
+                default: "."
+            state_key_suffix:
+                description: "Suffix under TF_STATE_KEY for the state file path (e.g., live/terraform.tfstate)"
+                required: false
+                default: "live/terraform.tfstate"
+            plan_only:
+                description: "If true, do only plan -destroy (no destroy)"
+                required: false
+                default: "false"
+
+permissions:
+    id-token: write
+    contents: read
+
+concurrency:
+    group: destroy-${{ github.ref }}
+    cancel-in-progress: false
+
+jobs:
+    tf-destroy:
+        name: terraform-destroy
+        runs-on: ubuntu-latest
+
+        # EXTRA SAFETY: only allow on main
+        if: ${{ github.ref == 'refs/heads/main' }}
+
+        # Use a protected environment so reviewers must approve (configure in repo Settings → Environments)
+        environment: production
+
+        defaults:
+            run:
+                working-directory: ${{ inputs.directory }}
+
+        env:
+            AWS_REGION: ${{ vars.AWS_REGION }}
+            TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+            TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
+            AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+
+        steps:
+            - name: Guardrail — require exact confirmation phrase
+              run: |
+                  set -euo pipefail
+                  if [ "${{ inputs.confirm }}" != "I UNDERSTAND THIS WILL DESTROY ALL RESOURCES" ]; then
+                    echo "Refusing to proceed: confirmation phrase mismatch."
+                    exit 1
+                  fi
+                  echo "Confirmation accepted."
+
+            - name: Checkout repo
+              uses: actions/checkout@v5
+
+            - name: Setup Terraform
+              uses: hashicorp/setup-terraform@v3
+              with:
+                  terraform_version: 1.13.3
+
+            - name: Configure AWS credentials (OIDC)
+              uses: aws-actions/configure-aws-credentials@v5
+              with:
+                  role-to-assume: ${{ env.AWS_ROLE_ARN }}
+                  aws-region: ${{ env.AWS_REGION }}
+                  role-session-name: gha-destroy-${{ github.run_id }}
+
+            - name: Terraform init (S3 backend; lockfile)
+              run: |
+                  terraform init -input=false \
+                    -backend-config="bucket=${TF_STATE_BUCKET}" \
+                    -backend-config="key=${TF_STATE_KEY}/${{ inputs.state_key_suffix }}" \
+                    -backend-config="region=${AWS_REGION}" \
+                    -backend-config="use_lockfile=true" \
+                    -backend-config="encrypt=true"
+
+            - name: Select workspace
+              run: |
+                  set -euo pipefail
+                  terraform workspace list || true
+                  terraform workspace select "${{ inputs.workspace }}" || terraform workspace new "${{ inputs.workspace }}"
+                  terraform workspace show
+
+            - name: Terraform plan -destroy (always)
+              env:
+                  TF_VAR_region: ${{ env.AWS_REGION }}
+              run: |
+                  set -euo pipefail
+                  terraform plan -destroy -input=false -no-color -out=tfplan.destroy
+
+            - name: Upload destroy plan artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: tfplan-destroy-${{ github.run_number }}
+                  path: ${{ inputs.directory }}/tfplan.destroy
+                  retention-days: 7
+
+            - name: Stop if plan_only is true
+              if: ${{ inputs.plan_only == 'true' }}
+              run: echo "Plan only requested. Exiting before destroy."
+
+            - name: Terraform destroy (requires confirmation)
+              if: ${{ inputs.plan_only != 'true' }}
+              env:
+                  TF_VAR_region: ${{ env.AWS_REGION }}
+              run: |
+                  set -euo pipefail
+                  terraform destroy -auto-approve
