@@ -49,7 +49,10 @@ resource "github_repository_ruleset" "main" {
 }
 
 # ---- DEVELOP BRANCH----
+<<<<<<< HEAD
 
+=======
+>>>>>>> 46f9869 (resolve conflict (#50))
 resource "github_repository_ruleset" "develop" {
   repository  = var.repo_name
   name        = "develop"
