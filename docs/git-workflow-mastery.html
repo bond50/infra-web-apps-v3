@@ -384,6 +384,15 @@ git pull --rebase
 git merge --ff-only origin/main # Fast-forward merge to keep history clean
 git push                      # Push the updated develop branch
 
+if above fails try
+
+# Sync main → develop (keeps production commit in develop; unready work remains on develop)
+git fetch origin --prune
+git switch -c sync/m2d origin/main
+git push -u origin HEAD
+gh pr create --base develop --head sync/m2d --title "Sync: main → develop" --body "Bring production commit into develop."
+gh pr merge --squash --auto
+
 # 4. (Optional) Clean up the remote release branch
 git push origin :release/v0.4.0</code></pre>
             </section>

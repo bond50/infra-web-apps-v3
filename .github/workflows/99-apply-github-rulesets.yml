@@ -45,9 +45,24 @@ jobs:
             -backend-config="dynamodb_table=${{ vars.TF_STATE_TABLE }}" \
             -backend-config="encrypt=true"
 
+      # === ADDED: Pre-import repository so TF manages existing repo instead of creating it ===
+      - name: Pre-import repository (squash-only settings)
+        env:
+          TF_VAR_github_owner: ${{ github.repository_owner }}
+          TF_VAR_github_token: ${{ secrets.GH_TOKEN_ADMIN }} # provider token for import
+        run: |
+          set -euo pipefail
+          # Import only if not already in state
+          terraform state show github_repository.repo >/dev/null 2>&1 || \
+            terraform import -input=false github_repository.repo "${{ github.event.repository.name }}"
+          # NOTE: Import ID is the repo *name* only; owner comes from provider config
+
       # NEW: Auto-import any existing rulesets by name so TF won't try to recreate them
       - name: Pre-import existing rulesets (by name)
         shell: bash
+        env: # CHANGED: pass TF vars so provider can read
+          TF_VAR_github_owner: ${{ github.repository_owner }}
+          TF_VAR_github_token: ${{ secrets.GH_TOKEN_ADMIN }}
         run: |
           set -euo pipefail
           declare -A MAP=(
@@ -56,12 +71,10 @@ jobs:
             ["release/*"]="github_repository_ruleset.release_star"
             ["hotfix/*"]="github_repository_ruleset.hotfix_star"
           )
-          # List existing rulesets: id + name
           gh api "repos/${REPO_FULL}/rulesets" --jq '.[] | "\(.id)\t\(.name)"' | while IFS=$'\t' read -r ID NAME; do
             TFADDR="${MAP[$NAME]:-}"
             if [ -n "${TFADDR}" ]; then
               echo "Importing ruleset '${NAME}' (id=${ID}) into ${TFADDR}"
-              # Import format: <repo_name>:<ruleset_id>
               terraform import -input=false "${TFADDR}" "${REPO_NAME}:${ID}" || true
             fi
           done
