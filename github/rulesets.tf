@@ -14,10 +14,13 @@
 locals {
   # Match the exact name reported by GitHub Actions for a pull_request event
   pr_gate_context = "05 - PR Quality Gate / pr-quality"
+<<<<<<< HEAD
 
+=======
+>>>>>>> 1962c17 (Finalize repo rules (1 approval, protected main/develop) (#47))
 }
 
-# ---- MAIN ----
+# ---- MAIN BRANCH----
 resource "github_repository_ruleset" "main" {
   repository  = var.repo_name
   name        = "main"
@@ -51,7 +54,10 @@ resource "github_repository_ruleset" "main" {
 }
 
 # ---- DEVELOP BRANCH----
+<<<<<<< HEAD
 # ---- DEVELOP ----
+=======
+>>>>>>> 1962c17 (Finalize repo rules (1 approval, protected main/develop) (#47))
 resource "github_repository_ruleset" "develop" {
   repository  = var.repo_name
   name        = "develop"
