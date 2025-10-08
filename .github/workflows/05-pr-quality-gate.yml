@@ -10,7 +10,7 @@ name: 05 - PR Quality Gate
 
 on:
   pull_request:
-    branches: ["**"]
+    branches: ["main, develop"]
 
 permissions:
   id-token: write
@@ -24,6 +24,7 @@ concurrency:
 jobs:
   pr-quality:
     runs-on: ubuntu-latest
+    name: pr-quality
 
     steps:
       - name: Checkout repository code
