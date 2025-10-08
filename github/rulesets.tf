@@ -9,6 +9,11 @@
 #   pr_gate_context = "05 - PR Quality Gate / pr-quality"
 # }
 
+# locals {
+#   pr_gate_context = "05 - PR Quality Gate / pr-quality"
+# }
+
+
 locals {
   # Match the exact name reported by GitHub Actions for a pull_request event
   pr_gate_context = "05 - PR Quality Gate / pr-quality"
