@@ -11,7 +11,7 @@
 
 locals {
   # Match the exact name reported by GitHub Actions for a pull_request event
-  pr_gate_context = "05 - PR Quality Gate / pr-quality (pull_request)"
+  pr_gate_context = "05 - PR Quality Gate / pr-quality"
 }
 
 # ---- MAIN BRANCH----
