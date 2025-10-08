@@ -42,12 +42,38 @@ jobs:
             -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
             -backend-config="key=${{ vars.TF_STATE_KEY }}/github-rulesets.tfstate" \
             -backend-config="region=${{ vars.AWS_REGION }}" \
-            -backend-config="dynamodb_table=${{ vars.TF_STATE_TABLE }}" \
+            -backend-config="use_lockfile=true" \
             -backend-config="encrypt=true"
+
+      # === ADDED: Pre-import repository so TF manages existing repo instead of creating it ===
+      - name: Pre-import repository (squash-only settings)
+        env:
+          TF_VAR_github_owner: ${{ github.repository_owner }}
+          TF_VAR_github_token: ${{ secrets.GH_TOKEN_ADMIN }} # provider token for import
+        run: |
+          set -euo pipefail
+          # Import only if not already in state
+          terraform state show github_repository.repo >/dev/null 2>&1 || {
+            # Try with repo name only (preferred for this provider)
+            terraform import -input=false github_repository.repo "${{ github.event.repository.name }}" || \
+            # Fallback to owner/repo if the provider expects that form
+            terraform import -input=false github_repository.repo "${{ github.repository }}"
+          }
+
+      # === ADDED: Verify repository import succeeded ===
+      - name: Verify repository import
+        run: |
+          set -euo pipefail
+          terraform state list | grep '^github_repository\.repo$' >/dev/null || {
+            echo "Repository not imported into Terraform state; refusing to apply."; exit 1;
+          }
 
       # NEW: Auto-import any existing rulesets by name so TF won't try to recreate them
       - name: Pre-import existing rulesets (by name)
         shell: bash
+        env: # CHANGED: authenticate provider during import
+          TF_VAR_github_owner: ${{ github.repository_owner }}
+          TF_VAR_github_token: ${{ secrets.GH_TOKEN_ADMIN }}
         run: |
           set -euo pipefail
           declare -A MAP=(
@@ -56,12 +82,10 @@ jobs:
             ["release/*"]="github_repository_ruleset.release_star"
             ["hotfix/*"]="github_repository_ruleset.hotfix_star"
           )
-          # List existing rulesets: id + name
           gh api "repos/${REPO_FULL}/rulesets" --jq '.[] | "\(.id)\t\(.name)"' | while IFS=$'\t' read -r ID NAME; do
             TFADDR="${MAP[$NAME]:-}"
             if [ -n "${TFADDR}" ]; then
               echo "Importing ruleset '${NAME}' (id=${ID}) into ${TFADDR}"
-              # Import format: <repo_name>:<ruleset_id>
               terraform import -input=false "${TFADDR}" "${REPO_NAME}:${ID}" || true
             fi
           done
