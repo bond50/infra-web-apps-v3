@@ -11,10 +11,10 @@
 
 locals {
   # Match the exact name reported by GitHub Actions for a pull_request event
-  pr_gate_context = "05 - PR Quality Gate / pr-quality (pull_request)"
+  pr_gate_context = "05 - PR Quality Gate / pr-quality"
 }
 
-# ---- MAIN ----
+# ---- MAIN BRANCH----
 resource "github_repository_ruleset" "main" {
   repository  = var.repo_name
   name        = "main"
@@ -47,7 +47,7 @@ resource "github_repository_ruleset" "main" {
   }
 }
 
-# ---- DEVELOP ----
+# ---- DEVELOP BRANCH----
 resource "github_repository_ruleset" "develop" {
   repository  = var.repo_name
   name        = "develop"
