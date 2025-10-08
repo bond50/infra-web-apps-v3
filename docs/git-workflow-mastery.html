@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Git Workflow Mastery (Main ⇄ Develop)</title>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+            rel="stylesheet"
+        />
+        <link
+            rel="stylesheet"
+            href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+        />
+        <style>
+            /* --- Global Resets & Variables --- */
+            :root {
+                --color-text: #1a202c;
+                --color-heading: #1a365d;
+                --color-subtle-text: #4a5568;
+                --color-background: #f7fafc;
+                --color-surface: #fff;
+                --color-border: #e2e8f0;
+
+                --color-code-bg: #0f172a;
+                --color-code-text: #e2e8f0;
+                --color-inline-code-bg: #edf2f7;
+
+                --color-success: #38a169;
+                --color-warning: #dd6b20;
+                --color-danger: #e53e3e;
+
+                --color-primary: #4f46e5;
+                --color-primary-light: #e0e7ff;
+
+                --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
+                --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.07);
+                --shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.08);
+
+                --border-radius: 12px;
+                --border-radius-lg: 16px;
+            }
+
+            /* --- Base & Typography --- */
+            body {
+                margin: 0;
+                font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto,
+                    Ubuntu, Cantarell, 'Helvetica Neue', Arial, 'Noto Sans',
+                    'Apple Color Emoji', 'Segoe UI Emoji';
+                line-height: 1.6;
+                background: linear-gradient(135deg, #f5f7fa 0%, #e4edf5 100%);
+                color: var(--color-text);
+                min-height: 100vh;
+            }
+
+            h1,
+            h2,
+            h3 {
+                color: var(--color-heading);
+                margin-top: 0;
+                font-weight: 700;
+            }
+
+            h1 {
+                text-align: center;
+                margin-bottom: 0.5rem;
+                font-size: 2.5rem;
+                background: linear-gradient(
+                    90deg,
+                    var(--color-primary),
+                    var(--color-success)
+                );
+                -webkit-background-clip: text;
+                background-clip: text;
+                color: transparent;
+                position: relative;
+                display: inline-block;
+            }
+
+            h1::after {
+                content: '';
+                position: absolute;
+                bottom: -8px;
+                left: 50%;
+                transform: translateX(-50%);
+                width: 80px;
+                height: 4px;
+                background: linear-gradient(
+                    90deg,
+                    var(--color-primary),
+                    var(--color-success)
+                );
+                border-radius: 2px;
+            }
+
+            h2 {
+                font-size: 1.5rem;
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+
+            h2 i {
+                color: var(--color-primary);
+                font-size: 1.3rem;
+            }
+
+            ul {
+                padding-left: 22px;
+                margin: 0.5rem 0;
+            }
+
+            li {
+                margin: 0.5rem 0;
+                position: relative;
+            }
+
+            li::marker {
+                color: var(--color-primary);
+            }
+
+            /* --- Layout --- */
+            .container {
+                max-width: 1080px;
+                margin: 2rem auto;
+                padding: 2.5rem;
+                background-color: var(--color-surface);
+                border-radius: var(--border-radius-lg);
+                box-shadow: var(--shadow-lg);
+                position: relative;
+                overflow: hidden;
+            }
+
+            .container::before {
+                content: '';
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                height: 5px;
+                background: linear-gradient(
+                    90deg,
+                    var(--color-primary),
+                    var(--color-success)
+                );
+            }
+
+            .subtitle {
+                text-align: center;
+                color: var(--color-subtle-text);
+                margin-top: 0;
+                margin-bottom: 2rem;
+                font-size: 1.1rem;
+                font-weight: 500;
+                max-width: 700px;
+                margin-left: auto;
+                margin-right: auto;
+            }
+
+            /* --- Components --- */
+
+            /* Card Component */
+            .card {
+                background-color: var(--color-surface);
+                border: 1px solid var(--color-border);
+                border-radius: var(--border-radius);
+                padding: 1.5rem 2rem;
+                margin: 1.5rem 0;
+                border-left: 6px solid transparent;
+                box-shadow: var(--shadow-sm);
+                transition: all 0.3s ease;
+                position: relative;
+            }
+
+            .card:hover {
+                transform: translateY(-3px);
+                box-shadow: var(--shadow-md);
+            }
+
+            /* Card Modifiers for different states */
+            .card-success {
+                border-left-color: var(--color-success);
+                background-color: rgba(56, 161, 105, 0.03);
+            }
+
+            .card-warning {
+                border-left-color: var(--color-warning);
+                background-color: rgba(221, 107, 32, 0.03);
+            }
+
+            .card-danger {
+                border-left-color: var(--color-danger);
+                background-color: rgba(229, 62, 62, 0.03);
+            }
+
+            /* Code Blocks */
+            pre {
+                background-color: var(--color-code-bg);
+                color: var(--color-code-text);
+                padding: 1.5rem;
+                border-radius: var(--border-radius);
+                overflow-x: auto;
+                font-size: 0.9em;
+                position: relative;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                margin: 1rem 0;
+            }
+
+            pre::before {
+                content: '';
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                height: 40px;
+                background: rgba(0, 0, 0, 0.2);
+                border-radius: var(--border-radius) var(--border-radius) 0 0;
+            }
+
+            /* Style for inline <code> tags outside of <pre> blocks */
+            code {
+                background-color: var(--color-inline-code-bg);
+                color: var(--color-code-bg);
+                padding: 4px 8px;
+                border-radius: 6px;
+                font-size: 0.9em;
+                font-weight: 500;
+                border: 1px solid rgba(0, 0, 0, 0.05);
+            }
+
+            /* Reset styles for <code> tags inside <pre> blocks to inherit from the parent */
+            pre > code {
+                background-color: transparent;
+                color: inherit;
+                padding: 0;
+                border-radius: 0;
+                font-size: inherit;
+                border: none;
+            }
+
+            /* Header styles */
+            header {
+                text-align: center;
+                margin-bottom: 2rem;
+                padding-bottom: 2rem;
+                border-bottom: 1px solid var(--color-border);
+            }
+
+            /* Icon decorations */
+            .icon-decor {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 36px;
+                height: 36px;
+                background-color: var(--color-primary-light);
+                border-radius: 50%;
+                margin-right: 10px;
+            }
+
+            /* Responsive adjustments */
+            @media (max-width: 768px) {
+                .container {
+                    padding: 1.5rem;
+                    margin: 1rem;
+                }
+
+                h1 {
+                    font-size: 2rem;
+                }
+
+                .card {
+                    padding: 1.25rem;
+                }
+
+                pre {
+                    padding: 1rem;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <main class="container">
+            <header>
+                <h1>Git Workflow Mastery</h1>
+                <p class="subtitle">
+                    Main ⇄ Develop with Features, Releases, Hotfixes •
+                    Protections Respected • 0 0 Convergence
+                </p>
+            </header>
+
+            <section class="card card-success">
+                <h2>
+                    <i class="fas fa-shield-alt"></i> Stable Rules (Set and
+                    Forget)
+                </h2>
+                <p>
+                    Require one approval on <code>main</code> and
+                    <code>develop</code>, block force-pushes/deletes, keep
+                    history linear, and require the non-strict
+                    <strong>PR Quality Gate</strong> check:
+                </p>
+                <pre><code>locals {
+  pr_gate_context = "05 - PR Quality Gate / pr-quality"
+}
+required_status_checks.strict_required_status_checks_policy = false</code></pre>
+                <p>
+                    Apply these rules using your “99 - Apply GitHub Rulesets”
+                    workflow, which should support
+                    <code>workflow_dispatch</code>.
+                </p>
+            </section>
+
+            <section class="card">
+                <h2><i class="fas fa-gem"></i> Golden Rules</h2>
+                <ul>
+                    <li>
+                        No direct commits to <code>main</code> or
+                        <code>develop</code>.
+                    </li>
+                    <li>
+                        Features start from <code>develop</code> and are
+                        squashed back into <code>develop</code>.
+                    </li>
+                    <li>
+                        Releases go from <code>develop</code> to
+                        <code>main</code>, then fast-forward
+                        <code>develop</code> from <code>main</code>.
+                    </li>
+                    <li>
+                        Hotfixes go from <code>main</code> to <code>main</code>,
+                        then are back-merged into <code>develop</code>.
+                    </li>
+                    <li>
+                        After any merge to <code>main</code>, run the
+                        <strong>Back-merge</strong> and verify
+                        <strong>0 0</strong> convergence.
+                    </li>
+                </ul>
+            </section>
+
+            <section class="card">
+                <h2><i class="fas fa-code-branch"></i> Feature Flow</h2>
+                <pre><code># 1. Sync with the latest develop branch
+git fetch origin --prune
+git switch develop
+git pull --rebase
+
+# 2. Create and switch to a new feature branch
+git switch -c feature/my-change
+
+# 3. Make changes, commit, and push
+# ... make your code changes ...
+git add .
+git commit -m "feat: my change"
+git push -u origin HEAD
+
+# 4. Create and merge the pull request
+gh pr create --base develop --head feature/my-change --title "feat: my change" --body "…"
+gh pr merge --squash --auto
+
+# 5. Clean up local branches
+git switch develop
+git pull --rebase
+git branch -d feature/my-change</code></pre>
+            </section>
+
+            <section class="card">
+                <h2><i class="fas fa-rocket"></i> Release Flow</h2>
+                <pre><code># 1. Create a release branch from the latest develop
+git switch develop
+git pull --rebase
+git switch -c release/v0.4.0
+git push -u origin HEAD
+
+# 2. Open a pull request against the main branch
+gh pr create --base main --head release/v0.4.0 --title "Release v0.4.0" --body "…"
+
+# 3. After the PR is approved and merged, sync develop with main
+git switch develop
+git pull --rebase
+git merge --ff-only origin/main # Fast-forward merge to keep history clean
+git push                      # Push the updated develop branch
+
+# 4. (Optional) Clean up the remote release branch
+git push origin :release/v0.4.0</code></pre>
+            </section>
+
+            <section class="card">
+                <h2><i class="fas fa-fire"></i> Hotfix Flow</h2>
+                <pre><code># 1. Create a hotfix branch from the latest main
+git switch main
+git pull --rebase
+git switch -c hotfix/fix-bug
+git push -u origin HEAD
+
+# 2. Open a pull request against main
+gh pr create --base main --head hotfix/fix-bug --title "hotfix: fix bug" --body "…"
+
+# 3. After the PR is merged, back-merge the changes into develop
+git switch develop
+git pull --rebase
+git merge --no-ff origin/main # Create a merge commit to show the hotfix was integrated
+git push</code></pre>
+            </section>
+
+            <section class="card">
+                <h2><i class="fas fa-hammer"></i> Resolve Conflicts Fast</h2>
+                <pre><code># To keep your version of the file
+git checkout --ours path/to/file
+git add path/to/file
+
+# To keep the incoming version of the file
+git checkout --theirs path/to/file
+git add path/to/file
+
+# After resolving all conflicts, complete the operation
+git commit              # If you were merging
+git rebase --continue   # If you were rebasing
+
+# To cancel the operation and start over
+git merge --abort       # or: git rebase --abort</code></pre>
+            </section>
+
+            <section class="card">
+                <h2>
+                    <i class="fas fa-sync-alt"></i> Keep 0 0 (Check After Every
+                    Main Merge)
+                </h2>
+                <pre><code># 1. Switch to develop and sync with remote main
+git switch develop
+git fetch origin --prune
+git merge --ff-only origin/main
+git push
+
+# 2. Verify that develop is up-to-date with main (should output "0 0")
+git rev-list --left-right --count origin/main...origin/develop</code></pre>
+            </section>
+
+            <section class="card">
+                <h2><i class="fas fa-broom"></i> Clean Branches</h2>
+                <pre><code># Delete remote branches that have been merged (except main/develop)
+for b in $(git ls-remote --heads origin | awk '{print $2}' | sed 's@refs/heads/@@' | grep -vE '^(main|develop)$'); do
+  git push origin :$b || true
+done
+
+# Delete local branches (except main/develop)
+for lb in $(git for-each-ref --format='%(refname:short)' refs/heads | grep -vE '^(main|develop)$'); do
+  git branch -D "$lb" || true
+done</code></pre>
+            </section>
+
+            <section class="card card-warning">
+                <h2>
+                    <i class="fas fa-exclamation-triangle"></i> Gotchas & Common
+                    Issues
+                </h2>
+                <ul>
+                    <li>
+                        <strong>"No upstream branch" error:</strong>
+                        Run <code>git push -u origin HEAD</code> the first time
+                        you push a new branch.
+                    </li>
+                    <li>
+                        <strong>Unstaged changes blocking a pull:</strong>
+                        Stash them temporarily:
+                        <code
+                            >git stash -u -m wip && git pull --rebase && git
+                            stash pop</code
+                        >
+                    </li>
+                    <li>
+                        <strong>PR checks not updating:</strong>
+                        Push an empty commit to trigger CI:
+                        <code
+                            >git commit --allow-empty -m "ci: nudge" && git
+                            push</code
+                        >
+                    </li>
+                    <li>
+                        <strong>Checks stuck on "Expected":</strong>
+                        Ensure the job name matches
+                        <code>05 - PR Quality Gate / pr-quality</code> and that
+                        the ruleset uses <code>strict=false</code>.
+                    </li>
+                </ul>
+            </section>
+        </main>
+    </body>
+</html>
