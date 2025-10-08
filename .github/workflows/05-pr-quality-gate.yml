@@ -11,6 +11,8 @@ name: 05 - PR Quality Gate
 on:
   pull_request:
     branches: ["main", "develop"]
+    types: [opened, synchronize, reopened]
+  merge_group: {}
 
 permissions:
   id-token: write
