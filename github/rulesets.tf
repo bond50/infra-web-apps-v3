@@ -81,3 +81,17 @@ resource "github_repository_ruleset" "develop" {
     }
   }
 }
+# === ADDED: Enforce squash-only merges at repository level ===
+# GitHub exposes allowed merge methods on the repo, not via rulesets.
+# This disables Merge commit and Rebase, leaving Squash as the only option.
+resource "github_repository" "repo" {
+  name                   = var.repo_name
+  allow_merge_commit     = false # ADDED: disable "Merge commit"
+  allow_rebase_merge     = false # ADDED: disable "Rebase and merge"
+  allow_squash_merge     = true  # ADDED: keep Squash
+  delete_branch_on_merge = true  # ADDED: tidy merged branches automatically
+
+  # Optional: make squash commit title/body mirror the PR
+  squash_merge_commit_title   = "PR_TITLE"
+  squash_merge_commit_message = "PR_BODY"
+}
