@@ -116,6 +116,10 @@ jobs:
           CFG_PROJECT_NAME: ${{ steps.cfg.outputs.project_name }}
           CFG_BUCKET: ${{ steps.cfg.outputs.bucket_name }}
           CFG_TABLE: ${{ steps.cfg.outputs.dynamodb_table_name }}
+
+          # ✅ Make the GitHub provider work during terraform import
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN_ADMIN }}
+          TF_VAR_github_token: ${{ secrets.GH_TOKEN_ADMIN }}
         run: python scripts/bootstrap_imports.py
 
       - name: Terraform Apply (bootstrap)
