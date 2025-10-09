@@ -196,7 +196,6 @@ jobs:
           terraform -chdir=./bootstrap import -input=false github_actions_variable.tfvar_enable_nat_gateway         "${REPO}:TF_VAR_enable_nat_gateway"      || true
           terraform -chdir=./bootstrap import -input=false github_actions_variable.tfvar_use_eip "${REPO}:TF_VAR_use_eip" || true
           terraform -chdir=./bootstrap import -input=false github_actions_variable.tfvar_azs "${REPO}:TF_VAR_azs" || true
-
           echo "Repo variable imports done."
 
       - name: Import existing S3 bucket if present
