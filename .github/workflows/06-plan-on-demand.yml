@@ -1,0 +1,108 @@
+name: "06 - Terraform Plan (On-Demand)"
+
+on:
+    workflow_dispatch:
+        inputs:
+            ref:
+                description: "Branch / tag / SHA to plan (defaults to selected branch)"
+                required: false
+            working_dir:
+                description: "Terraform working directory"
+                required: false
+                default: "."
+            var_file:
+                description: "Optional tfvars file path (e.g. examples/dev.auto.tfvars)"
+                required: false
+            target:
+                description: "Optional comma-separated targets (e.g. module.iam_instance_profile)"
+                required: false
+
+permissions:
+    id-token: write
+    contents: read
+
+env:
+    AWS_REGION: ${{ vars.AWS_REGION }}
+    AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+    TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+    TF_STATE_TABLE: ${{ vars.TF_STATE_TABLE }}
+    TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
+
+jobs:
+    plan:
+        runs-on: ubuntu-latest
+        concurrency:
+            group: plan-${{ github.ref }}
+            cancel-in-progress: true
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+              with:
+                  ref: ${{ github.event.inputs.ref || github.ref }}
+
+            - name: Configure AWS (OIDC)
+              uses: aws-actions/configure-aws-credentials@v4
+              with:
+                  role-to-assume: ${{ env.AWS_ROLE_ARN }}
+                  aws-region: ${{ env.AWS_REGION }}
+
+            - name: Setup Terraform
+              uses: hashicorp/setup-terraform@v3
+
+            - name: Setup Python
+              uses: actions/setup-python@v5
+              with:
+                  python-version: "3.11"
+
+            # Reuses your repo's exporter to turn repo Variables into TF_VAR_* env
+            - name: Export TF_VARs
+              working-directory: ${{ github.event.inputs.working_dir || '.' }}
+              run: python ./scripts/export_tfvars_ci.py
+
+            - name: Terraform Init (remote backend)
+              working-directory: ${{ github.event.inputs.working_dir || '.' }}
+              run: |
+                  terraform init -input=false \
+                    -backend-config="bucket=${TF_STATE_BUCKET}" \
+                    -backend-config="key=${TF_STATE_KEY}" \
+                    -backend-config="region=${AWS_REGION}" \
+                    -backend-config="dynamodb_table=${TF_STATE_TABLE}"
+
+            - name: Terraform Validate
+              working-directory: ${{ github.event.inputs.working_dir || '.' }}
+              run: terraform validate
+
+            - name: Terraform Plan
+              id: plan
+              shell: bash
+              working-directory: ${{ github.event.inputs.working_dir || '.' }}
+              run: |
+                  ARGS="-input=false -no-color"
+                  if [ -n "${{ github.event.inputs.var_file }}" ]; then
+                    ARGS="$ARGS -var-file=${{ github.event.inputs.var_file }}"
+                  fi
+                  if [ -n "${{ github.event.inputs.target }}" ]; then
+                    IFS=',' read -ra TARGS <<< "${{ github.event.inputs.target }}"
+                    for t in "${TARGS[@]}"; do ARGS="$ARGS -target=$t"; done
+                  fi
+                  terraform plan $ARGS -out=tfplan
+                  terraform show -no-color tfplan > plan.txt
+
+            - name: Upload plan artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: tfplan-${{ github.run_id }}
+                  path: |
+                      ${{ github.event.inputs.working_dir || '.' }}/tfplan
+                      ${{ github.event.inputs.working_dir || '.' }}/plan.txt
+
+            - name: Add plan to job summary
+              if: always()
+              working-directory: ${{ github.event.inputs.working_dir || '.' }}
+              run: |
+                  echo '### Terraform plan' >> $GITHUB_STEP_SUMMARY
+                  echo '' >> $GITHUB_STEP_SUMMARY
+                  echo '```txt' >> $GITHUB_STEP_SUMMARY
+                  sed -n '1,400p' plan.txt >> $GITHUB_STEP_SUMMARY
+                  echo '```' >> $GITHUB_STEP_SUMMARY
