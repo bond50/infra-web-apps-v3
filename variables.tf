@@ -25,10 +25,7 @@ variable "private_db_subnet_cidrs" {
   default = ["172.20.20.0/24", "172.20.21.0/24"]
 }
 
-variable "enable_nat_instance" {
-  type    = bool
-  default = false
-}
+
 
 variable "enable_nat_gateway" {
   type    = bool
@@ -103,4 +100,9 @@ variable "azs" {
 variable "ssh_allowed_cidr" {
   type    = string
   default = "197.248.148.214/32"
+}
+
+variable "enable_nat_instance" {
+  type    = bool
+  default = false
 }

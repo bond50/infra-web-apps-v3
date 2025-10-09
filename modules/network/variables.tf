@@ -27,3 +27,14 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+variable "enable_nat_instance" {
+  type    = bool
+  default = false
+}
+
+# CIDR allowed to SSH to the NAT instance (only used if NAT instance is enabled)
+variable "ssh_allowed_cidr" {
+  type    = string
+  default = "0.0.0.0/0"
+}

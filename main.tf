@@ -19,7 +19,9 @@ module "network" {
   private_app_subnet_cidrs = var.private_app_subnet_cidrs
   private_db_subnet_cidrs  = var.private_db_subnet_cidrs
 
-  enable_nat_gateway = var.enable_nat_gateway
+  enable_nat_gateway  = var.enable_nat_gateway
+  enable_nat_instance = var.enable_nat_instance
+  ssh_allowed_cidr    = var.ssh_allowed_cidr
   # (tags optional)
 }
 
