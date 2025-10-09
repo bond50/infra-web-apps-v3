@@ -72,19 +72,31 @@ jobs:
           terraform workspace list || true
           terraform workspace select "$WS" || terraform workspace new "$WS"
 
-      - name: Terraform fmt & validate & plan
-        env:
-          TF_VAR_region: ${{ vars.AWS_REGION }}
-          TF_VAR_project_name: ${{ vars.TF_VAR_project_name }}
-          TF_VAR_environment: ${{ vars.TF_VAR_environment }}
-          TF_VAR_vpc_cidr: ${{ vars.TF_VAR_vpc_cidr }}
-          TF_VAR_public_subnet_cidrs: ${{ vars.TF_VAR_public_subnet_cidrs }}
-          TF_VAR_private_app_subnet_cidrs: ${{ vars.TF_VAR_private_app_subnet_cidrs }}
-          TF_VAR_private_db_subnet_cidrs: ${{ vars.TF_VAR_private_db_subnet_cidrs }}
-          TF_VAR_enable_nat_gateway: ${{ vars.TF_VAR_enable_nat_gateway }}
-          TF_VAR_use_eip: ${{ vars.TF_VAR_use_eip }}
-          TF_VAR_azs: ${{ vars.TF_VAR_azs }}
+      - name: Export optional TF_VARs (only if non-empty)
+        shell: bash
+        run: |
+          set -euo pipefail
 
+          # Always export region (required)
+          echo "TF_VAR_region=${{ vars.AWS_REGION }}" >> "$GITHUB_ENV"
+
+          kv() { n="$1"; v="$2"; if [ -n "$v" ]; then printf 'TF_VAR_%s=%s\n' "$n" "$v" >> "$GITHUB_ENV"; fi; }
+
+          # Optional overrides from repo Variables (JSON strings for lists)
+          kv project_name             '${{ vars.TF_VAR_project_name }}'
+          kv environment              '${{ vars.TF_VAR_environment }}'
+          kv vpc_cidr                 '${{ vars.TF_VAR_vpc_cidr }}'
+          kv public_subnet_cidrs      '${{ vars.TF_VAR_public_subnet_cidrs }}'
+          kv private_app_subnet_cidrs '${{ vars.TF_VAR_private_app_subnet_cidrs }}'
+          kv private_db_subnet_cidrs  '${{ vars.TF_VAR_private_db_subnet_cidrs }}'
+          kv enable_nat_gateway       '${{ vars.TF_VAR_enable_nat_gateway }}'
+          kv use_eip                  '${{ vars.TF_VAR_use_eip }}'
+          kv azs                      '${{ vars.TF_VAR_azs }}'
+
+          # Optional: if you already store this in repo variables, export it too
+          kv ssh_allowed_cidr         '${{ vars.TF_VAR_ssh_allowed_cidr }}'
+
+      - name: Terraform fmt & validate & plan
         run: |
           terraform fmt -check
           terraform validate
