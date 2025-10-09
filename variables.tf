@@ -36,12 +36,12 @@ variable "enable_nat_gateway" {
 }
 
 
-# --- Project / Environment ---
-# variable "project_name" { type = string }
-# variable "environment" {
-#   type    = string
-#   default = "prod"
-# }
+
+variable "project_name" { type = string }
+variable "environment" {
+  type    = string
+  default = "prod"
+}
 
 # # --- Architecture / Instance ---
 # # tflint-ignore: terraform_unused_declarations
