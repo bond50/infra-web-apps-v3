@@ -288,3 +288,11 @@ resource "github_actions_variable" "tfvar_azs" {
   variable_name = "TF_VAR_azs"
   value         = var.tfvar_azs
 }
+
+
+resource "github_actions_variable" "tfvar_ssh_allowed_cidr" {
+  count         = var.tfvar_ssh_allowed_cidr != "" ? 1 : 0
+  repository    = var.github_repo
+  variable_name = "TF_VAR_ssh_allowed_cidr"
+  value         = var.tfvar_ssh_allowed_cidr
+}

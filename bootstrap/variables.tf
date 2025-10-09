@@ -99,3 +99,9 @@ variable "tfvar_use_eip" {
   type    = string
   default = "false"
 }
+
+
+variable "tfvar_ssh_allowed_cidr" {
+  type    = string
+  default = ""
+}
