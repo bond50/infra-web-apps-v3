@@ -1,182 +1,135 @@
-###############################################################
-# 00 - Bootstrap AWS Backend (idempotent with pre-imports)
-# Purpose:
-#  - One-time bootstrap using TEMP AWS keys:
-#      * S3 bucket (Terraform state)
-#      * DynamoDB table (state lock)
-#      * GitHub OIDC provider + IAM Role
-#      * Repo Variables: AWS_REGION, AWS_ROLE_ARN, TF_STATE_*
-#  - Idempotent: if resources already exist, we import them to state
-#    BEFORE apply, so you don't get 409/EntityAlreadyExists errors.
-#  - After success, delete the temporary AWS keys (and optionally GH_ADMIN_TOKEN).
-###############################################################
 name: 00 - Bootstrap AWS Backend
 
 on:
-  workflow_dispatch:
-    inputs:
-      bucket_name:
-        description: "Globally-unique S3 bucket for Terraform state (e.g., my-tfstate-1234abcd)"
-        required: true
-      dynamodb_table_name:
-        description: "DynamoDB table for state locking (e.g., tf-locks-my-tfstate)"
-        required: true
-      tf_state_key:
-        description: "State key path (e.g., infra/terraform.tfstate)"
-        required: true
-      github_owner:
-        description: "GitHub owner/org (e.g., bond50)"
-        required: true
-      github_repo:
-        description: "GitHub repo name (no owner, e.g., infra-web-apps-v3)"
-        required: true
-      project_name:
-        description: "Project short name (tags & IAM role name prefix)"
-        required: true
-        default: "web-apps"
+  workflow_dispatch: {}
+  push:
+    paths:
+      - "bootstrap/**"
+      - ".github/workflows/00-bootstrap-aws-backend.yml"
+      - "scripts/bootstrap_*.py"
 
 permissions:
   contents: read
   actions: write
+
+concurrency:
+  group: bootstrap
+  cancel-in-progress: false
 
 jobs:
   bootstrap:
     runs-on: ubuntu-latest
 
     env:
-      ###############################################################
-      # Map inputs to TF_VAR_* so Terraform picks them up automatically
-      ###############################################################
-      TF_VAR_aws_region: ${{ vars.AWS_REGION }}
-      TF_VAR_project_name: ${{ inputs.project_name }}
-      TF_VAR_bucket_name: ${{ inputs.bucket_name }}
-      TF_VAR_dynamodb_table_name: ${{ inputs.dynamodb_table_name }}
-      TF_VAR_tf_state_key: ${{ inputs.tf_state_key }}
-      TF_VAR_github_owner: ${{ inputs.github_owner }}
-      TF_VAR_github_repo: ${{ inputs.github_repo }}
-      TF_VAR_github_token: ${{ secrets.GH_ADMIN_TOKEN }}
+      # Optional naming knobs; sane defaults will be derived if missing
+      PROJECT_NAME: ${{ vars.PROJECT_NAME || 'web-apps' }}
+      AWS_REGION:   ${{ vars.AWS_REGION }}
+
+      # Optional repo overrides (else derived from context)
+      GITHUB_OWNER: ${{ vars.GITHUB_OWNER }}
+      GITHUB_REPO:  ${{ vars.GITHUB_REPO }}
+
+      # Optional pre-seeded backend values (else derived in the script)
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_STATE_TABLE:  ${{ vars.TF_STATE_TABLE }}
+      TF_STATE_KEY:    ${{ vars.TF_STATE_KEY }}
+
+      # Optional TF_VAR_* you want created as repo Variables by Terraform
+      TF_VAR_project_name:            ${{ vars.TF_VAR_project_name }}
+      TF_VAR_environment:             ${{ vars.TF_VAR_environment }}
+      TF_VAR_region:                  ${{ vars.TF_VAR_region }}
+      TF_VAR_vpc_cidr:                ${{ vars.TF_VAR_vpc_cidr }}
+      TF_VAR_public_subnet_cidrs:     ${{ vars.TF_VAR_public_subnet_cidrs }}
+      TF_VAR_private_app_subnet_cidrs: ${{ vars.TF_VAR_private_app_subnet_cidrs }}
+      TF_VAR_private_db_subnet_cidrs: ${{ vars.TF_VAR_private_db_subnet_cidrs }}
+      TF_VAR_enable_nat_gateway:      ${{ vars.TF_VAR_enable_nat_gateway }}
+      TF_VAR_use_eip:                 ${{ vars.TF_VAR_use_eip }}
+      TF_VAR_azs:                     ${{ vars.TF_VAR_azs }}
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      ###############################################################
-      # Preflight: ensure bootstrap secrets/vars exist & region format is valid
-      ###############################################################
-      - name: Preflight — verify inputs/secrets/vars
-        shell: bash
-        run: |
-          set -eu
-          [ -n "${{ secrets.AWS_ACCESS_KEY_ID }}" ]     || { echo "Missing secret: AWS_ACCESS_KEY_ID"; exit 1; }
-          [ -n "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ] || { echo "Missing secret: AWS_SECRET_ACCESS_KEY"; exit 1; }
-          [ -n "${{ secrets.GH_ADMIN_TOKEN }}" ]        || { echo "Missing secret: GH_ADMIN_TOKEN"; exit 1; }
-          [ -n "${{ vars.AWS_REGION }}" ]               || { echo "Missing variable: AWS_REGION"; exit 1; }
-          if [[ ! "${{ vars.AWS_REGION }}" =~ ^[a-z]+-[a-z]+-[0-9]+$ ]]; then
-            echo "Invalid AWS_REGION: '${{ vars.AWS_REGION }}' (expected 'us-east-1', 'eu-west-1', etc.)"
-            exit 1
-          fi
-          echo "Preflight OK."
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.6.0
+          terraform_version: 1.13.3
 
-      ###############################################################
-      # Configure TEMPORARY AWS credentials for bootstrap ONLY
-      ###############################################################
+      # Temporary bootstrap credentials (delete after success)
       - name: Configure AWS credentials (temporary bootstrap keys)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v5
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ vars.AWS_REGION }}
+          aws-region:            ${{ env.AWS_REGION }}
 
-      - name: Sanity — whoami
-        run: aws sts get-caller-identity
+      - name: Preflight
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION:            ${{ env.AWS_REGION }}
+          GH_TOKEN_ADMIN:        ${{ secrets.GH_TOKEN_ADMIN }}
+        run: python scripts/bootstrap_preflight.py
 
       - name: Terraform Init (bootstrap module)
         working-directory: ./bootstrap
         run: terraform init -input=false
 
-      ###############################################################
-      # IMPORT-IF-PRESENT: make reruns idempotent
-      # Imports for: OIDC provider, repo variables, S3 bucket,
-      # DynamoDB lock table, IAM role, and role policy attachment.
-      ###############################################################
-      - name: Import existing OIDC provider if present
-        shell: bash
-        run: |
-          set -eu
-          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
-          OIDC_ARN="arn:aws:iam::${ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com"
-          COUNT="$(aws iam list-open-id-connect-providers \
-            --query "OpenIDConnectProviderList[?Arn=='${OIDC_ARN}'] | length(@)" --output text)"
-          if [ "${COUNT}" != "0" ]; then
-            echo "OIDC provider exists; importing: ${OIDC_ARN}"
-            terraform -chdir=./bootstrap import -input=false aws_iam_openid_connect_provider.github "${OIDC_ARN}" || true
-          else
-            echo "OIDC provider does not exist yet — will be created by apply."
-          fi
-
-      - name: Import existing GitHub repo variables if present
-        shell: bash
+      - name: Resolve config (derive bucket/table/key; seed TF_VARs)
+        id: cfg
         env:
-          REPO: ${{ inputs.github_repo }}
-        run: |
-          set -eu
-          terraform -chdir=./bootstrap import -input=false github_actions_variable.aws_region      "${REPO}:AWS_REGION"      || true
-          terraform -chdir=./bootstrap import -input=false github_actions_variable.tf_state_bucket "${REPO}:TF_STATE_BUCKET" || true
-          terraform -chdir=./bootstrap import -input=false github_actions_variable.tf_state_table  "${REPO}:TF_STATE_TABLE"  || true
-          terraform -chdir=./bootstrap import -input=false github_actions_variable.tf_state_key    "${REPO}:TF_STATE_KEY"    || true
-          terraform -chdir=./bootstrap import -input=false github_actions_variable.aws_role_arn    "${REPO}:AWS_ROLE_ARN"    || true
-          echo "Repo variable imports done."
+          AWS_REGION:                ${{ env.AWS_REGION }}
+          PROJECT_NAME:              ${{ env.PROJECT_NAME }}
+          GITHUB_OWNER:              ${{ env.GITHUB_OWNER }}
+          GITHUB_REPO:               ${{ env.GITHUB_REPO }}
+          GITHUB_REPOSITORY:         ${{ github.repository }}
+          GITHUB_REPOSITORY_OWNER:   ${{ github.repository_owner }}
 
-      - name: Import existing S3 bucket if present
-        shell: bash
-        run: |
-          set -eu
-          BUCKET="${{ inputs.bucket_name }}"
-          if aws s3api head-bucket --bucket "${BUCKET}" 2>/dev/null; then
-            echo "S3 bucket exists; importing: ${BUCKET}"
-            terraform -chdir=./bootstrap import -input=false aws_s3_bucket.tfstate "${BUCKET}" || true
-          else
-            echo "S3 bucket does not exist yet — will be created by apply."
-          fi
+          TF_STATE_BUCKET:           ${{ env.TF_STATE_BUCKET }}
+          TF_STATE_TABLE:            ${{ env.TF_STATE_TABLE }}
+          TF_STATE_KEY:              ${{ env.TF_STATE_KEY }}
 
-      - name: Import existing DynamoDB lock table if present
-        shell: bash
-        run: |
-          set -eu
-          TABLE="${{ inputs.dynamodb_table_name }}"
-          if aws dynamodb describe-table --table-name "${TABLE}" >/dev/null 2>&1; then
-            echo "DynamoDB table exists; importing: ${TABLE}"
-            terraform -chdir=./bootstrap import -input=false aws_dynamodb_table.tf_lock "${TABLE}" || true
-          else
-            echo "DynamoDB table does not exist yet — will be created by apply."
-          fi
+          GH_TOKEN_ADMIN:            ${{ secrets.GH_TOKEN_ADMIN }}
 
-      - name: Import existing IAM role + policy attachment if present
-        shell: bash
-        run: |
-          set -eu
-          ROLE_NAME="${{ inputs.project_name }}-gha"
-          if aws iam get-role --role-name "${ROLE_NAME}" >/dev/null 2>&1; then
-            echo "IAM role exists; importing: ${ROLE_NAME}"
-            terraform -chdir=./bootstrap import -input=false aws_iam_role.github_actions "${ROLE_NAME}" || true
-            ATTACH_ID="${ROLE_NAME}/arn:aws:iam::aws:policy/AdministratorAccess"
-            echo "Importing role policy attachment: ${ATTACH_ID}"
-            terraform -chdir=./bootstrap import -input=false aws_iam_role_policy_attachment.gha_admin "${ATTACH_ID}" || true
-          else
-            echo "IAM role does not exist yet — will be created by apply."
-          fi
+          # pass-through TF_VAR_* you want created as repo Variables
+          TF_VAR_project_name:            ${{ env.TF_VAR_project_name }}
+          TF_VAR_environment:             ${{ env.TF_VAR_environment }}
+          TF_VAR_region:                  ${{ env.TF_VAR_region }}
+          TF_VAR_vpc_cidr:                ${{ env.TF_VAR_vpc_cidr }}
+          TF_VAR_public_subnet_cidrs:     ${{ env.TF_VAR_public_subnet_cidrs }}
+          TF_VAR_private_app_subnet_cidrs:${{ env.TF_VAR_private_app_subnet_cidrs }}
+          TF_VAR_private_db_subnet_cidrs: ${{ env.TF_VAR_private_db_subnet_cidrs }}
+          TF_VAR_enable_nat_gateway:      ${{ env.TF_VAR_enable_nat_gateway }}
+          TF_VAR_use_eip:                 ${{ env.TF_VAR_use_eip }}
+          TF_VAR_azs:                     ${{ env.TF_VAR_azs }}
+        run: python scripts/bootstrap_resolve_config.py
 
-      ###############################################################
-      # Apply bootstrap (idempotent after imports)
-      ###############################################################
+      - name: Import existing resources (idempotency)
+        env:
+          TF_DIR:                  ./bootstrap
+          CFG_REPO:                ${{ steps.cfg.outputs.github_repo }}
+          CFG_PROJECT_NAME:        ${{ steps.cfg.outputs.project_name }}
+          CFG_BUCKET:              ${{ steps.cfg.outputs.bucket_name }}
+          CFG_TABLE:               ${{ steps.cfg.outputs.dynamodb_table_name }}
+
+          
+          GITHUB_TOKEN:            ${{ secrets.GH_TOKEN_ADMIN }}
+          TF_VAR_github_token:     ${{ secrets.GH_TOKEN_ADMIN }}
+        run: python scripts/bootstrap_imports.py
+
       - name: Terraform Apply (bootstrap)
         working-directory: ./bootstrap
+        env:
+          # Ensure GitHub provider has token both via TF_VAR and env
+          TF_VAR_github_token: ${{ secrets.GH_TOKEN_ADMIN }}
+          GITHUB_TOKEN:        ${{ secrets.GH_TOKEN_ADMIN }}
         run: terraform apply -auto-approve -input=false
+
 
       - name: Show outputs
         working-directory: ./bootstrap
