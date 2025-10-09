@@ -130,6 +130,7 @@ jobs:
           GITHUB_TOKEN:        ${{ secrets.GH_TOKEN_ADMIN }}
         run: terraform apply -auto-approve -input=false
 
+        
       - name: Show outputs
         working-directory: ./bootstrap
         run: terraform output
