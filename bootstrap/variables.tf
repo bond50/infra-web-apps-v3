@@ -103,5 +103,5 @@ variable "tfvar_use_eip" {
 
 variable "tfvar_ssh_allowed_cidr" {
   type    = string
-  default = ""
+  default = "197.248.148.214/32"
 }
