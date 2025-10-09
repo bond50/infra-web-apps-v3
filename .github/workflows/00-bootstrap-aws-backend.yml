@@ -6,7 +6,7 @@ on:
     paths:
       - "bootstrap/**"
       - ".github/workflows/00-bootstrap-aws-backend.yml"
-      - "scripts/**"
+      - "scripts/bootstrap_*.py"
 
 permissions:
   contents: read
@@ -20,64 +20,110 @@ jobs:
   bootstrap:
     runs-on: ubuntu-latest
 
+    env:
+      # You can predefine these in repo Variables to control names; else sane defaults are derived
+      PROJECT_NAME: ${{ vars.PROJECT_NAME || 'web-apps' }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+
+      # Optional repo overrides (else derived from repository context)
+      GITHUB_OWNER: ${{ vars.GITHUB_OWNER }}
+      GITHUB_REPO: ${{ vars.GITHUB_REPO }}
+
+      # Optional pre-seeded backend values (else derived):
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_STATE_TABLE: ${{ vars.TF_STATE_TABLE }}
+      TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
+
+      # Optional TF_VAR_* you want created as repo Variables by Terraform
+      TF_VAR_project_name: ${{ vars.TF_VAR_project_name }}
+      TF_VAR_environment: ${{ vars.TF_VAR_environment }}
+      TF_VAR_region: ${{ vars.TF_VAR_region }}
+      TF_VAR_vpc_cidr: ${{ vars.TF_VAR_vpc_cidr }}
+      TF_VAR_public_subnet_cidrs: ${{ vars.TF_VAR_public_subnet_cidrs }}
+      TF_VAR_private_app_subnet_cidrs: ${{ vars.TF_VAR_private_app_subnet_cidrs }}
+      TF_VAR_private_db_subnet_cidrs: ${{ vars.TF_VAR_private_db_subnet_cidrs }}
+      TF_VAR_enable_nat_gateway: ${{ vars.TF_VAR_enable_nat_gateway }}
+      TF_VAR_use_eip: ${{ vars.TF_VAR_use_eip }}
+      TF_VAR_azs: ${{ vars.TF_VAR_azs }}
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
-      - name: Install deps
-        run: pip install --quiet boto3
-
-      - name: Preflight — verify inputs/secrets/vars
-        env:
-          MODE: bootstrap
-          AWS_REGION: ${{ vars.AWS_REGION }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          GH_TOKEN_ADMIN: ${{ secrets.GH_TOKEN_ADMIN }}
-        run: python scripts/preflight_required.py
+          python-version: "3.12"
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.13.3
 
+      # Temporary bootstrap credentials (delete after success)
       - name: Configure AWS credentials (temporary bootstrap keys)
         uses: aws-actions/configure-aws-credentials@v5
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ vars.AWS_REGION }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Resolve bootstrap config (vars → defaults)
+      - name: Preflight
         env:
-          AWS_REGION: ${{ vars.AWS_REGION }}
-          TF_VAR_project_name: ${{ vars.TF_VAR_project_name }}
-          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
-          TF_STATE_TABLE: ${{ vars.TF_STATE_TABLE }}
-          TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ env.AWS_REGION }}
           GH_TOKEN_ADMIN: ${{ secrets.GH_TOKEN_ADMIN }}
-        run: python scripts/bootstrap_resolve.py
+        run: python scripts/bootstrap_preflight.py
 
       - name: Terraform Init (bootstrap module)
         working-directory: ./bootstrap
         run: terraform init -input=false
 
-      - name: Import-if-present (OIDC, repo vars, S3, DDB, role)
+      - name: Resolve config (derive bucket/table/key; seed TF_VARs)
+        id: cfg
         env:
-          AWS_REGION: ${{ vars.AWS_REGION }}
-          REPO: ${{ github.event.repository.name }}
-          BUCKET: ${{ steps.bootstrap_resolve.outputs.bucket_name }}
-          TABLE: ${{ steps.bootstrap_resolve.outputs.dynamodb_table_name }}
-          ROLE_NAME: ${{ steps.bootstrap_resolve.outputs.project_name }}-gha
+          AWS_REGION: ${{ env.AWS_REGION }}
+          PROJECT_NAME: ${{ env.PROJECT_NAME }}
+          GITHUB_OWNER: ${{ env.GITHUB_OWNER }}
+          GITHUB_REPO: ${{ env.GITHUB_REPO }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+
+          TF_STATE_BUCKET: ${{ env.TF_STATE_BUCKET }}
+          TF_STATE_TABLE: ${{ env.TF_STATE_TABLE }}
+          TF_STATE_KEY: ${{ env.TF_STATE_KEY }}
+
+          GH_TOKEN_ADMIN: ${{ secrets.GH_TOKEN_ADMIN }}
+
+          # pass through any TF_VAR_* you want created as repo Variables
+          TF_VAR_project_name: ${{ env.TF_VAR_project_name }}
+          TF_VAR_environment: ${{ env.TF_VAR_environment }}
+          TF_VAR_region: ${{ env.TF_VAR_region }}
+          TF_VAR_vpc_cidr: ${{ env.TF_VAR_vpc_cidr }}
+          TF_VAR_public_subnet_cidrs: ${{ env.TF_VAR_public_subnet_cidrs }}
+          TF_VAR_private_app_subnet_cidrs: ${{ env.TF_VAR_private_app_subnet_cidrs }}
+          TF_VAR_private_db_subnet_cidrs: ${{ env.TF_VAR_private_db_subnet_cidrs }}
+          TF_VAR_enable_nat_gateway: ${{ env.TF_VAR_enable_nat_gateway }}
+          TF_VAR_use_eip: ${{ env.TF_VAR_use_eip }}
+          TF_VAR_azs: ${{ env.TF_VAR_azs }}
+        run: python scripts/bootstrap_resolve_config.py
+
+      - name: Import existing resources (idempotency)
+        env:
+          TF_DIR: ./bootstrap
+          CFG_REPO: ${{ steps.cfg.outputs.github_repo }}
+          CFG_PROJECT_NAME: ${{ steps.cfg.outputs.project_name }}
+          CFG_BUCKET: ${{ steps.cfg.outputs.bucket_name }}
+          CFG_TABLE: ${{ steps.cfg.outputs.dynamodb_table_name }}
         run: python scripts/bootstrap_imports.py
 
       - name: Terraform Apply (bootstrap)
         working-directory: ./bootstrap
         env:
+          # Ensure GitHub provider has token both via TF_VAR and env
           TF_VAR_github_token: ${{ secrets.GH_TOKEN_ADMIN }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN_ADMIN }}
         run: terraform apply -auto-approve -input=false
 
       - name: Show outputs
