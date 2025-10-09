@@ -66,6 +66,7 @@ tfvar_resources = {
     "github_actions_variable.tfvar_enable_nat_gateway":       "TF_VAR_enable_nat_gateway",
     "github_actions_variable.tfvar_use_eip":                  "TF_VAR_use_eip",
     "github_actions_variable.tfvar_azs":                      "TF_VAR_azs",
+    "github_actions_variable.tfvar_ssh_allowed_cidr":         "TF_VAR_ssh_allowed_cidr",
 }
 
 for addr, gh_name in tfvar_resources.items():
