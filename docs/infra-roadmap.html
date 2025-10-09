@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Infra Roadmap & Step-by-Step Rollout</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#f6f7fb; --card:#fff; --ink:#111827; --muted:#4b5563; --accent:#4f46e5;
+    --ok:#16a34a; --warn:#d97706; --bad:#dc2626; --br:#e5e7eb;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,Helvetica,Arial;background:var(--bg);color:var(--ink);line-height:1.6}
+  .wrap{max-width:1100px;margin:32px auto;padding:24px}
+  h1{font-size:2.1rem;margin:0 0 8px;color:#111}
+  h2{font-size:1.25rem;margin:22px 0 8px;padding-bottom:6px;border-bottom:1px solid var(--br);color:#111}
+  .kicker{color:var(--muted);margin-bottom:16px}
+  .card{background:var(--card);border:1px solid var(--br);border-radius:14px;padding:18px 20px;margin:16px 0;box-shadow:0 4px 20px rgba(0,0,0,.05)}
+  pre{background:#0b1020;color:#e5e7eb;padding:12px 14px;border-radius:10px;overflow:auto}
+  code{background:#eef2ff;border:1px solid #c7d2fe;color:#3730a3;border-radius:6px;padding:2px 6px}
+  ul{margin:8px 0 8px 18px}
+  .phase{border-left:6px solid var(--accent)}
+  .phase.ok{border-left-color:var(--ok)}
+  .note{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 12px}
+</style>
+</head>
+<body>
+  <main class="wrap">
+    <h1>Infra Roadmap & Step‑by‑Step Rollout</h1>
+    <p class="kicker">Terraform + GitHub Actions • Multi‑app on one EC2 • Caddy SSL • Postgres mandatory • SSM automation • S3 backups</p>
+
+    <section class="card">
+      <h2>0) Baseline</h2>
+      <ul>
+        <li>Git flow with squash‑only merges and required checks.</li>
+        <li>Workflows: PR Quality Gate, Terraform (plan on branches / apply on <code>main</code>), Destroy (manual), Bootstrap (one‑time).</li>
+        <li>Backend: S3 (encrypted, versioned) + DynamoDB lock.</li>
+        <li>Local modules: <code>network</code>, <code>compute_app_host</code>, <code>stack-ssm</code>.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>1) Secrets & Variables</h2>
+      <p>Set repo variables: <code>AWS_REGION</code>, <code>AWS_ROLE_ARN</code>, <code>TF_STATE_BUCKET</code>, <code>TF_STATE_TABLE</code>, <code>TF_STATE_KEY</code>. Add secrets as needed (bootstrap keys, app tokens, Cloudflare).</p>
+      <pre><code>gh variable set AWS_REGION -b "us-east-1"
+gh variable set TF_STATE_BUCKET -b "my-tfstate-bucket"
+gh secret set RESEND_API_KEY -b "..."</code></pre>
+    </section>
+
+    <section class="card phase ok">
+      <h2>Phase A — Network (VPC + Subnets + Free Endpoints)</h2>
+      <ol>
+        <li>Uncomment only <code>module "network"</code> in <code>main.tf</code>.</li>
+        <li>Open PR → review plan → merge to ship to <code>main</code>.</li>
+        <li>Verify in AWS: VPC, subnets, route tables, S3/DynamoDB Gateway endpoints.</li>
+      </ol>
+      <div class="note">No NAT by default (cost saver). Flip <code>enable_nat_gateway=true</code> later.</div>
+    </section>
+
+    <section class="card phase">
+      <h2>Phase B — Compute Host (EC2 + SG + Optional EIP)</h2>
+      <ol>
+        <li>Uncomment <code>module "compute_app_host"</code>. Ensure <code>ssh_allowed_cidr</code> is your IP.</li>
+        <li>PR → plan → merge → verify EC2, SG, EIP (if enabled).</li>
+      </ol>
+    </section>
+
+    <section class="card phase">
+      <h2>Phase C — SSM Bootstrap + Postgres (Docker) + Caddy</h2>
+      <ol>
+        <li>Uncomment <code>module "stack_ssm"</code> (keep <code>enable_local_postgres=true</code>).</li>
+        <li>PR → plan → merge → check SSM associations are successful.</li>
+        <li>On the instance: <code>docker ps</code> shows caddy + postgres.</li>
+      </ol>
+    </section>
+
+    <section class="card">
+      <h2>Phase D — Backups (Nightly pg_dump → S3)</h2>
+      <p>Ensure backup bucket/prefix set. Verify objects after the schedule runs (02:00 UTC) or trigger manually.</p>
+    </section>
+
+    <section class="card">
+      <h2>Phase E — Multi‑App (ECR + Env)</h2>
+      <ul>
+        <li>Add ECR repos for each app via <code>modules/ecr-multi</code> (driven by <code>var.apps</code>).</li>
+        <li>Store per‑app env in SSM Parameter Store. SSM doc renders per‑app <code>.env</code> and Compose files.</li>
+        <li>Cloudflare DNS when ready; premium SSL option via <code>ssl_mode</code>.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Comment/Uncomment recipe</h2>
+      <pre><code># A
+module "network" { ... }
+
+# B
+module "network" { ... }
+module "compute_app_host" { ... }
+
+# C
+module "network" { ... }
+module "compute_app_host" { ... }
+module "stack_ssm" { ... }</code></pre>
+    </section>
+
+    <section class="card">
+      <h2>Sanity checks</h2>
+      <ul>
+        <li>SSM Managed Instance is online; associations green.</li>
+        <li>EC2 security groups allow 80/443 (and SSH if enabled).</li>
+        <li>S3 has nightly database dumps.</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>
