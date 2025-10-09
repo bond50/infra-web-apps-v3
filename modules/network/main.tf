@@ -86,10 +86,12 @@ resource "aws_security_group" "nat" {
 
 # NAT Instance in first public subnet
 resource "aws_instance" "nat" {
-  count                       = var.enable_nat_instance && !var.enable_nat_gateway ? 1 : 0
-  ami                         = data.aws_ssm_parameter.al2023_ami[0].value
-  instance_type               = "t3.micro"
-  subnet_id                   = module.vpc.public_subnet_ids[0]
+  count         = var.enable_nat_instance && !var.enable_nat_gateway ? 1 : 0
+  ami           = data.aws_ssm_parameter.al2023_ami[0].value
+  instance_type = "t3.micro"
+
+  subnet_id = module.vpc.public_subnets[0]
+
   vpc_security_group_ids      = [aws_security_group.nat[0].id]
   associate_public_ip_address = true
 
