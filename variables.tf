@@ -103,12 +103,38 @@ variable "azs" {
 # }
 
 
-# variable "ssh_allowed_cidr" {
-#   type    = string
-#   default = "197.248.148.214/32"
-# }
+variable "ssh_allowed_cidr" {
+  type    = string
+  default = "197.248.148.214/32"
+}
 
 # variable "enable_nat_instance" {
 #   type    = bool
 #   default = false
 # }
+
+
+variable "instance_type" {
+  description = "EC2 type for minimal host"
+  type        = string
+  default     = "t4g.small" # ARM/Graviton
+}
+
+variable "key_name" {
+  description = "Optional EC2 key pair name"
+  type        = string
+  default     = ""
+}
+
+# OS family toggle for the host AMI
+
+# CPU architecture toggle for the AMI lookup
+variable "arch" {
+  description = "CPU architecture for the AMI: \"amd64\" or \"arm64\""
+  type        = string
+  default     = "arm64"
+  validation {
+    condition     = contains(["amd64", "arm64"], var.arch)
+    error_message = "arch must be \"amd64\" or \"arm64\"."
+  }
+}
