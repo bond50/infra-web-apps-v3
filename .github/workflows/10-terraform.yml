@@ -75,6 +75,16 @@ jobs:
       - name: Terraform fmt & validate & plan
         env:
           TF_VAR_region: ${{ vars.AWS_REGION }}
+          TF_VAR_project_name: ${{ vars.TF_VAR_project_name }}
+          TF_VAR_environment: ${{ vars.TF_VAR_environment }}
+          TF_VAR_vpc_cidr: ${{ vars.TF_VAR_vpc_cidr }}
+          TF_VAR_public_subnet_cidrs: ${{ vars.TF_VAR_public_subnet_cidrs }}
+          TF_VAR_private_app_subnet_cidrs: ${{ vars.TF_VAR_private_app_subnet_cidrs }}
+          TF_VAR_private_db_subnet_cidrs: ${{ vars.TF_VAR_private_db_subnet_cidrs }}
+          TF_VAR_enable_nat_gateway: ${{ vars.TF_VAR_enable_nat_gateway }}
+          TF_VAR_use_eip: ${{ vars.TF_VAR_use_eip }}
+          TF_VAR_azs: ${{ vars.TF_VAR_azs }}
+
         run: |
           terraform fmt -check
           terraform validate
@@ -93,3 +103,24 @@ jobs:
         env:
           TF_VAR_region: ${{ vars.AWS_REGION }}
         run: terraform apply -input=false -auto-approve -lock=false tfplan.bin
+
+      - name: Post-apply smoke test (EC2 via SSM)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        env:
+          INSTANCE_ID: ${{ steps.outs.outputs.instance_id }}
+        run: |
+          set -euo pipefail
+          # pull instance id from TF output if you don't already export it:
+          terraform output -json | jq -r '.web_instance_id.value' > iid.txt
+          IID="$(cat iid.txt)"
+          echo "Testing instance: $IID"
+
+          # docker ps and check service status
+          aws ssm send-command \
+            --document-name "AWS-RunShellScript" \
+            --parameters commands='["docker ps","systemctl status docker --no-pager || true","ss -lnt | grep 5432 || true"]' \
+            --instance-ids "$IID" \
+            --output text --query "Command.CommandId" > cmd.txt
+
+          CID="$(cat cmd.txt)"
+          aws ssm get-command-invocation --command-id "$CID" --instance-id "$IID" --query "Status" --output text

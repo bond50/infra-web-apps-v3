@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>AWS Infra Roadmap — Multi‑App on One EC2</title>
+<style>
+  :root{--ink:#1a202c;--muted:#4a5568;--head:#1a365d;--ok:#2f855a;--warn:#b7791f;--bad:#c53030;--bg:#f7fafc;--card:#fff;--border:#e2e8f0;--pri:#3949ab}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Inter,Roboto,Helvetica,Arial,sans-serif;line-height:1.55}
+  .wrap{max-width:1040px;margin:32px auto;padding:24px;background:var(--card);border-radius:14px;box-shadow:0 8px 28px rgba(0,0,0,.06);border:1px solid var(--border)}
+  h1,h2,h3{color:var(--head);margin:0 0 .3rem}
+  h1{font-size:1.9rem;text-align:center}
+  .meta{color:var(--muted);text-align:center;margin-bottom:12px}
+  h2{margin-top:26px;padding-bottom:6px;border-bottom:2px solid var(--border)}
+  .phase{margin:16px 0 22px;padding:14px 16px;border-left:6px solid var(--pri);background:#f8fafc;border-radius:10px}
+  .phase.ok{border-left-color:var(--ok);background:rgba(47,133,90,.06)}
+  .phase.warn{border-left-color:var(--warn);background:rgba(183,121,31,.06)}
+  .phase.bad{border-left-color:var(--bad);background:rgba(197,48,48,.06)}
+  pre{background:#111827;color:#e5e7eb;padding:12px;border-radius:10px;overflow:auto}
+  code{background:#edf2f7;padding:2px 6px;border-radius:6px;color: var(--ink)}
+  ul{margin:.4rem 0 .6rem 1.2rem}
+  li{margin:.35rem 0}
+  .tree{font-family:ui-monospace,Menlo,Consolas,monospace;background:#0b1020;color:#d0d7ff;padding:12px;border-radius:10px}
+  .next{background:#eef2ff;border:1px dashed #c7d2fe;padding:10px 12px;border-radius:10px;margin-top:8px}
+</style>
+</head>
+<body>
+  <main class="wrap">
+    <h1>AWS Infra Roadmap — Multi‑App on One EC2 (Docker+Caddy+Postgres)</h1>
+    <p class="meta">Version: 2025-10-09 06:00 UTC • Terraform 1.13.3 • AWS Provider ~&gt; 6.x • Ubuntu 24.04</p>
+
+    <section class="phase ok">
+      <h2>Phase 0 — Foundations (once)</h2>
+      <p><b>Goal:</b> Backend, OIDC, branch rules, CI jobs, and required repo variables.</p>
+      <ul>
+        <li>Variables: <code>AWS_REGION</code>, <code>AWS_ROLE_ARN</code>, <code>TF_STATE_BUCKET</code>, <code>TF_STATE_KEY</code>, <code>TF_STATE_TABLE</code></li>
+        <li>Secrets (as needed): <code>CLOUDFLARE_API_TOKEN</code>, <code>RESEND_API_KEY</code>, <code>SLACK_WEBHOOK_URL</code>, etc.</li>
+      </ul>
+      <pre><code>terraform -v   # 1.13.3
+aws --version  # AWS CLI v2
+gh --version   # GitHub CLI</code></pre>
+    </section>
+
+    <section class="phase">
+      <h2>Phase 1 — Network (VPC + Subnets + Free Endpoints)</h2>
+      <p><b>Goal:</b> 2 AZs, public/private-app/private-db subnets, <b>no NAT</b> by default, Gateway Endpoints for S3 &amp; DynamoDB.</p>
+      <pre><code>terraform init -reconfigure
+terraform plan -out=tfplan.net
+terraform apply tfplan.net</code></pre>
+    </section>
+
+    <section class="phase">
+      <h2>Phase 2 — Compute Host (EC2)</h2>
+      <p><b>Goal:</b> One inexpensive EC2 (t4g.small), SG 80/443 (+optional SSH), optional EIP.</p>
+      <pre><code>terraform plan -out=tfplan.ec2
+terraform apply tfplan.ec2
+terraform output web_public_ip</code></pre>
+    </section>
+
+    <section class="phase">
+      <h2>Phase 3 — SSM Base + Docker</h2>
+      <p><b>Goal:</b> SSM manageability + Docker installed/started.</p>
+      <pre><code>aws ssm start-session --target $(terraform output -raw web_instance_id)
+docker version
+exit</code></pre>
+    </section>
+
+    <section class="phase">
+      <h2>Phase 4 — Postgres on Host (Docker) — Mandatory</h2>
+      <p>Run Postgres container on same EC2. Future switch to external DB will be <code>enable_external_postgres</code>.</p>
+      <pre><code>aws ssm start-session --target $(terraform output -raw web_instance_id)
+pg_isready -h 127.0.0.1 -p 5432 || docker exec -it postgres pg_isready
+exit</code></pre>
+    </section>
+
+    <section class="phase">
+      <h2>Phase 5 — Multi‑App (Compose + Caddy)</h2>
+      <p>Multiple containers for apps, one Caddy reverse proxy with premium‑cert or Let's Encrypt fallback.</p>
+      <div class="next">Next step we will add: <code>apps</code> map + templates for <code>docker-compose.yml</code> and <code>Caddyfile</code>, rendered via SSM.</div>
+    </section>
+
+    <section class="phase">
+      <h2>Phase 6 — Backups</h2>
+      <p>Nightly <code>pg_dump</code> to S3 + manual restore doc.</p>
+    </section>
+
+    <section class="phase">
+      <h2>Phase 7 — DNS (Cloudflare)</h2>
+      <p>Optional A/AAAA per app with proxied/ttl controls.</p>
+    </section>
+
+    <section class="phase">
+      <h2>Phase 8 — ECR + Deploy Hooks</h2>
+      <p>ECR repo per app, OIDC build/push from app repos, SSM deploy doc.</p>
+    </section>
+
+    <section class="phase warn">
+      <h2>Phase 9 — Destroy</h2>
+      <p>Use your <b>90 - Terraform Destroy (manual)</b> workflow with the typed confirmation.</p>
+    </section>
+
+    <h2>Project Structure (target)</h2>
+    <pre class="tree">.
+├── backend.tf
+├── providers.tf
+├── data.tf
+├── variables.tf
+├── locals.tf
+├── main.tf
+├── outputs.tf
+│
+├── modules/
+│   ├── network/
+│   ├── compute_app_host/
+│   ├── stack-ssm/
+│   ├── app-compose/        # (NEXT)
+│   ├── db-backup/          # (NEXT)
+│   ├── cloudflare-dns/     # (NEXT)
+│   └── ecr-repository/     # (NEXT)
+│
+├── docs/
+│   ├── git-workflow-mastery.md / .html
+│   └── infra-aws-roadmap.md / .html
+│
+├── .github/workflows/
+│   ├── 05-pr-quality-gate.yml
+│   ├── 10-terraform.yml
+│   ├── 90-terraform-destroy.yml
+│   └── 99-apply-github-rulesets.yml
+└── README.md</pre>
+
+    <div class="next"><b>Next Up:</b> Phase 5 implementation — add <code>apps</code> variables and SSM-rendered Compose + Caddyfile, then test with one real domain.</div>
+  </main>
+</body>
+</html>

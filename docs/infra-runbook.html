@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Infra Web Apps v3 — End‑to‑End Runbook</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#0f172a;--panel:#0b1020;--ink:#e5e7eb;--muted:#9ca3af;--acc:#4f46e5;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444;}
+  *{box-sizing:border-box}
+  body{margin:0;background:linear-gradient(135deg,#0b1020,#111827);color:var(--ink);font:16px/1.6 Inter,system-ui,Segoe UI,Roboto,Arial}
+  main{max-width:980px;margin:32px auto;padding:28px;background:#111827;border:1px solid #1f2937;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+  h1{margin:0 0 12px;font-size:28px;letter-spacing:.2px;background:linear-gradient(90deg,#60a5fa,#a78bfa,#34d399);-webkit-background-clip:text;background-clip:text;color:transparent}
+  h2{margin:26px 0 10px;font-size:20px;color:#c7d2fe}
+  code,pre{font-family:ui-monospace,Consolas,Menlo,monospace}
+  pre{background:#0b1020;border:1px solid #1f2937;padding:12px 14px;border-radius:10px;overflow:auto}
+  table{width:100%;border-collapse:collapse}
+  td,th{padding:8px;border-bottom:1px solid #1f2937;vertical-align:top}
+  .muted{color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+<h1>Infra Web Apps v3 — End‑to‑End Runbook</h1>
+<div class="muted">Single source of truth for this repo. Keep this next to the code.</div>
+<hr style="border:0;border-top:1px solid #1f2937;margin:14px 0 22px">
+<article>
+# Infra Web Apps v3 — End‑to‑End Runbook (Git + Terraform + AWS)<br/>
+<br/>
+&gt; **Single source of truth for this repo.**  <br/>
+&gt; You can safely share this file with teammates. It merges: workflow rules, branch flow,<br/>
+&gt; CI pipelines, AWS stack layout, secrets/variables, and copy‑paste commands.<br/>
+<br/>
+---<br/>
+<br/>
+## 0) Golden rules (house style)<br/>
+- **Squash‑only merges** on protected branches (`main`, `develop`).<br/>
+- **Features → develop**, **Releases → main**, **Hotfixes → main**, then **sync main → develop**.<br/>
+- **Change-only** in reviews: when asking for edits, we provide *patch-style* instructions (what file, where, add/replace). Full files only for brand‑new additions or when requested.<br/>
+- **Terraform v1.13.3** everywhere; **AWS provider v6.x**; **Ubuntu 24.04** on EC2.<br/>
+- **Modules-first** (prefer registry modules); **single entry point**: root `main.tf`.<br/>
+- **Cost-aware defaults** (no NAT GW by default; gateway endpoints; small instance type).<br/>
+<br/>
+---<br/>
+<br/>
+## 1) Quick decision guide (branches)<br/>
+- **New work (Features):** `feature/*` off `develop` → PR to `develop`.<br/>
+- **Ship to Production:** `release/*` off `develop` → PR to `main` → **merge (squash)** → **APPLY**.<br/>
+- **Emergency Fix:** `hotfix/*` off `main` → PR to `main` → **merge (squash)** → **APPLY** → back‑merge to `develop` (sync PR).<br/>
+<br/>
+**Parity proof (content):**<br/>
+```bash<br/>
+git fetch origin --prune<br/>
+git rev-parse origin/main^{tree}; git rev-parse origin/develop^{tree}<br/>
+# if different:<br/>
+git diff --name-status origin/main origin/develop<br/>
+```<br/>
+<br/>
+---<br/>
+<br/>
+## 2) Pipelines (what runs, when)<br/>
+<br/>
+### A) 05 - PR Quality Gate<br/>
+- **Triggers:** PRs to any branch; also `merge_group`.<br/>
+- **What it does:** `fmt` → `validate` → `tflint` → `checkov` → `plan` (no apply).<br/>
+- **Required check name:** `05 - PR Quality Gate / pr-quality` (non‑strict).<br/>
+<br/>
+**Recommended trigger block:**<br/>
+```yaml<br/>
+on:<br/>
+  pull_request:<br/>
+    branches: ["**"]<br/>
+    types: [opened, synchronize, reopened]<br/>
+  merge_group: {}<br/>
+```<br/>
+<br/>
+### B) 10 - Terraform (plan on branches, apply on main)<br/>
+- **Triggers:** pushes on all branches and PRs.<br/>
+- **Behavior:** plan on branches/PRs; **apply only on push to `main`**; gated by Environment `production` (reviewers).<br/>
+- **Backend:** S3 (versioned, encrypted); OIDC to assume AWS role; 1 workspace per branch (`branch-&lt;name&gt;`).<br/>
+<br/>
+### C) 90 - Terraform Destroy (manual, safeguarded)<br/>
+- **Manual only.** Runs on `main` with environment approval. Requires typed confirm:<br/>
+  `I UNDERSTAND THIS WILL DESTROY ALL RESOURCES`.<br/>
+- Can run **plan-only** to inspect the destroy plan artifact first.<br/>
+<br/>
+### D) 99 - Apply GitHub Rulesets (manual admin)<br/>
+- Imports current repo &amp; rulesets into Terraform state (prevents 422 errors), applies protections and **squash‑only** merge settings.<br/>
+<br/>
+---<br/>
+<br/>
+## 3) One‑time bootstrap (creates backend + OIDC + repo variables)<br/>
+Run **“00 - Bootstrap AWS Backend”** in GitHub Actions with inputs:<br/>
+- `bucket_name` (global unique), `dynamodb_table_name`, `tf_state_key`<br/>
+- `github_owner`, `github_repo`, `project_name` (e.g., `web-apps`)<br/>
+<br/>
+**Creates:** S3 (+versioning +SSE +TLS-only policy), DynamoDB (lock), OIDC provider, IAM role `${project_name}-gha`, and GitHub repo **Variables**.<br/>
+<br/>
+Delete the temporary AWS access keys after success; OIDC takes over.<br/>
+<br/>
+---<br/>
+<br/>
+## 4) Secrets &amp; Variables (GitHub → Settings → Secrets and variables → Actions)<br/>
+<br/>
+### Variables (plain)<br/>
+| Name | Example | Purpose |<br/>
+|---|---|---|<br/>
+| `AWS_REGION` | `us-east-1` | Deployment region |<br/>
+| `AWS_ROLE_ARN` | `arn:aws:iam::123:role/web-apps-gha` | OIDC-assumable role |<br/>
+| `TF_STATE_BUCKET` | `my-tfstate-123` | Remote state bucket |<br/>
+| `TF_STATE_TABLE` | `tf-locks-my-tfstate` | Lock table (bootstrap) |<br/>
+| `TF_STATE_KEY` | `infra/terraform.tfstate` | Base state key prefix |<br/>
+<br/>
+### Secrets<br/>
+| Name | Example | Notes |<br/>
+|---|---|---|<br/>
+| `GH_TOKEN_ADMIN` | `ghp_***` | Only for rulesets/admin import workflows |<br/>
+| `CLOUDFLARE_API_TOKEN` | `***` | Manage DNS (if/when enabled) |<br/>
+| `SLACK_WEBHOOK_URL` | `https://hooks.slack.com/...` | Optional notifications |<br/>
+| `RESEND_API_KEY` | `re_*` | Optional email notifications |<br/>
+<br/>
+&gt; App‑specific env (per‑app) should go to SSM Parameter Store via module later; for now keep minimal in GitHub if needed.<br/>
+<br/>
+---<br/>
+<br/>
+## 5) Daily flow (features → releases → hotfixes → sync)<br/>
+<br/>
+### Feature<br/>
+```bash<br/>
+git fetch origin --prune<br/>
+git switch develop &amp;&amp; git pull --rebase<br/>
+git switch -c feature/my-change<br/>
+# ... commit/push ...<br/>
+gh pr create --base develop --head feature/my-change --title "feat: my-change" --body "…"<br/>
+gh pr merge --squash --auto<br/>
+```<br/>
+<br/>
+### Release<br/>
+```bash<br/>
+git switch develop &amp;&amp; git pull --rebase<br/>
+git switch -c release/v0.4.0 &amp;&amp; git push -u origin HEAD<br/>
+gh pr create --base main --head release/v0.4.0 --title "Release v0.4.0" --body "…"<br/>
+gh pr merge --squash --auto<br/>
+<br/>
+# Sync main → develop<br/>
+git fetch origin --prune<br/>
+git switch -c sync/m2d origin/main &amp;&amp; git push -u origin HEAD<br/>
+gh pr create --base develop --head sync/m2d --title "Sync: main → develop" --body "Bring prod commit back."<br/>
+gh pr merge --squash --auto<br/>
+```<br/>
+<br/>
+### Hotfix<br/>
+```bash<br/>
+git fetch origin --prune &amp;&amp; git switch main &amp;&amp; git pull --rebase<br/>
+git switch -c hotfix/fix-urgent &amp;&amp; git push -u origin HEAD<br/>
+gh pr create --base main --head hotfix/fix-urgent --title "hotfix: urgent" --body "…"<br/>
+gh pr merge --squash --auto<br/>
+<br/>
+# Back-merge<br/>
+git switch -c sync/hotfix origin/main &amp;&amp; git push -u origin HEAD<br/>
+gh pr create --base develop --head sync/hotfix --title "Back-merge hotfix main → develop" --body "…"<br/>
+gh pr merge --squash --auto<br/>
+```<br/>
+<br/>
+---<br/>
+<br/>
+## 6) Terraform stack (current)<br/>
+<br/>
+&gt; **Entry point:** root `main.tf` only. Everything else via modules.<br/>
+<br/>
+### Modules in use now<br/>
+- `modules/network`: VPC, public + private‑app + private‑db subnets (2 AZs), **free** S3/DynamoDB gateway endpoints, optional NAT GW (off by default).<br/>
+- `modules/compute_app_host`: EC2 (Ubuntu 24.04), security group, optional EIP, **Docker + Caddy + Postgres (Docker) via user_data**.<br/>
+- `modules/stack-ssm`: SSM association(s) for bootstrap/maintenance (extensible).<br/>
+<br/>
+### Postgres policy<br/>
+- **Mandatory** in the stack. Default: **Docker Postgres on the EC2 host**.<br/>
+- Future: toggle to split out to its **own instance**. (Planned variable: `postgres_on_separate_host = true|false` and dependent module wiring).<br/>
+<br/>
+### TLS choices<br/>
+- If **premium/commercial SSL** material is available (planned inputs: cert/privkey/chain via SSM/Secrets), Caddy will be configured with it.  <br/>
+- Otherwise, **Caddy auto‑issues** via ACME (Let’s Encrypt).<br/>
+<br/>
+---<br/>
+<br/>
+## 7) How to run locally (first time)<br/>
+<br/>
+```bash<br/>
+# Sanity<br/>
+terraform fmt -recursive &amp;&amp; terraform validate<br/>
+<br/>
+# Initialize (uses backend in backend.tf)<br/>
+terraform init<br/>
+<br/>
+# Create/select workspace (one per branch is common)<br/>
+terraform workspace list || true<br/>
+terraform workspace select branch-$(git rev-parse --abbrev-ref HEAD) || terraform workspace new branch-$(git rev-parse --abbrev-ref HEAD)<br/>
+<br/>
+# Plan (region comes from provider/env/vars; override with TF_VAR_region if needed)<br/>
+terraform plan -out=tfplan.bin<br/>
+<br/>
+# Apply (avoid on feature branches; prefer CI. If you must:)<br/>
+terraform apply tfplan.bin<br/>
+```<br/>
+<br/>
+**If backend changed** (e.g., bucket/key):  <br/>
+`terraform init -reconfigure`<br/>
+<br/>
+---<br/>
+<br/>
+## 8) Destroy (manual, safeguarded)<br/>
+<br/>
+**GitHub Actions → “90 - Terraform Destroy (manual)”**  <br/>
+Inputs:<br/>
+- `confirm` (exact phrase)<br/>
+- `workspace` (`default`/`prod`/`staging`…)<br/>
+- `directory` (TF root; default `.`)<br/>
+- `state_key_suffix` (e.g., `live/terraform.tfstate`)<br/>
+- `plan_only` (`true` to preview)<br/>
+<br/>
+**CLI parity**<br/>
+```bash<br/>
+terraform init \<br/>
+  -backend-config="bucket=$TF_STATE_BUCKET" \<br/>
+  -backend-config="key=$TF_STATE_KEY/live/terraform.tfstate" \<br/>
+  -backend-config="region=$AWS_REGION" \<br/>
+  -backend-config="use_lockfile=true" \<br/>
+  -backend-config="encrypt=true"<br/>
+<br/>
+terraform workspace select default || terraform workspace new default<br/>
+terraform plan -destroy -out=tfplan.destroy<br/>
+terraform destroy -auto-approve<br/>
+```<br/>
+<br/>
+---<br/>
+<br/>
+## 9) Troubleshooting (field‑tested)<br/>
+<br/>
+- **Repo 422 in Rulesets admin:** import the existing repo into TF before apply (the admin workflow does this automatically).<br/>
+- **Provider version conflict:** remove `.terraform/` and `.terraform.lock.hcl`, then `terraform init -upgrade` **or** align provider constraints to AWS v6.x everywhere.<br/>
+- **“Backend initialization required” after a local init:** run `terraform init -reconfigure` (state backend changed).<br/>
+- **PR Gate “Expected” never clears:** ensure PR trigger includes `synchronize` and add `merge_group: {}`; the required check name must match exactly.<br/>
+- **FF sync main→develop fails:** expected with squash merges; raise a **sync PR**.<br/>
+- **Windows newlines warning on HTML:** safe to ignore or `git config core.autocrlf false`.<br/>
+<br/>
+---<br/>
+<br/>
+## 10) Roadmap (near‑term)<br/>
+- **ECR (multi‑repo)** module + IAM to push from app repos.<br/>
+- **SSM Documents** for deploy, db dump/restore, prune, notify (ported from v2 with `.tpl`).<br/>
+- **Cloudflare** records module (toggle proxied), per‑app vhosts on Caddy.<br/>
+- **Postgres backup to S3** (nightly dumps), and **restore** document.<br/>
+- **Guardrails** on instance replacement (EBS snapshot/DLM, pre‑stop dump, data disks).<br/>
+- **Split Postgres** to its own host (toggle), security groups &amp; subnet placement wired.<br/>
+<br/>
+---<br/>
+<br/>
+## 11) Current repo structure (at time of writing)<br/>
+```<br/>
+.<br/>
+├── backend.tf<br/>
+├── providers.tf<br/>
+├── data.tf<br/>
+├── variables.tf<br/>
+├── locals.tf<br/>
+├── main.tf<br/>
+├── outputs.tf<br/>
+├── docs/<br/>
+│   ├── git-workflow-mastery.md<br/>
+│   ├── git-workflow-mastery.html<br/>
+│   ├── infra-roadmap.md<br/>
+│   ├── infra-roadmap.html<br/>
+│   └── README.updated.md<br/>
+├── modules/<br/>
+│   ├── network/<br/>
+│   ├── compute_app_host/<br/>
+│   └── stack-ssm/<br/>
+├── github/<br/>
+│   ├── rulesets.tf<br/>
+│   ├── providers.tf<br/>
+│   └── variables.tf<br/>
+├── bootstrap/<br/>
+│   ├── main.tf<br/>
+│   ├── providers.tf<br/>
+│   └── variables.tf<br/>
+└── .github/workflows/<br/>
+    ├── 05-pr-quality-gate.yml<br/>
+    ├── 10-terraform.yml<br/>
+    ├── 90-terraform-destroy.yml<br/>
+    └── 99-apply-github-rulesets.yml<br/>
+```<br/>
+<br/>
+---<br/>
+<br/>
+## 12) What to change next (short checklist)<br/>
+- [ ] Add ECR module(s) + outputs for app repos.<br/>
+- [ ] Add SSM Documents &amp; Associations (deploy, db-dump, db-restore).<br/>
+- [ ] Add Cloudflare DNS module (enable controlled cutover).<br/>
+- [ ] Add toggle/vars for premium SSL vs Caddy ACME.<br/>
+- [ ] Add Postgres dump‑to‑S3 + lifecycle; restore path tested.<br/>
+- [ ] Wire CI notifications (Slack/Resend) if desired.<br/>
+<br/>
+---<br/>
+<br/>
+### Appendix A — Commands we rely on often<br/>
+<br/>
+**Verify branch content parity**<br/>
+```bash<br/>
+git fetch origin --prune<br/>
+git rev-parse origin/main^{tree}; git rev-parse origin/develop^{tree}<br/>
+```<br/>
+<br/>
+**Open a PR from your current branch to develop**<br/>
+```bash<br/>
+gh pr create --base develop --head $(git branch --show-current) --title "…" --body "…"<br/>
+```<br/>
+<br/>
+**Create a sync PR (main→develop) after a release**<br/>
+```bash<br/>
+git fetch origin --prune<br/>
+git switch -c sync/m2d origin/main &amp;&amp; git push -u origin HEAD<br/>
+gh pr create --base develop --head sync/m2d --title "Sync: main → develop" --body "Bring prod commit."<br/>
+gh pr merge --squash --auto<br/>
+```<br/>
+<br/>
+---<br/>
+<br/>
+**End of runbook.** Keep this file close; it’s the living map of the project.<br/>
+
+</article>
+</main>
+</body>
+</html>

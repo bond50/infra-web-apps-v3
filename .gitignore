@@ -36,7 +36,8 @@ override.tf.json
 # Ignore CLI configuration files
 .terraformrc
 terraform.rc
-
+.vscode
 extra/
 
-# End of https://www.toptal.com/developers/gitignore/api/terraform
+
+# End of https://www.toptal.com/developers/gitignore/api/terraform.vscode/

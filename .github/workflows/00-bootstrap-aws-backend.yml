@@ -35,6 +35,47 @@ on:
         required: true
         default: "web-apps"
 
+      tfvar_project_name:
+        description: "TF_VAR_project_name (optional)"
+        required: false
+        default: ""
+      tfvar_environment:
+        description: "TF_VAR_environment (optional)"
+        required: false
+        default: ""
+      tfvar_region:
+        description: "TF_VAR_region (optional)"
+        required: false
+        default: ""
+      tfvar_vpc_cidr:
+        description: "TF_VAR_vpc_cidr (optional)"
+        required: false
+        default: ""
+      tfvar_public_subnet_cidrs:
+        description: 'TF_VAR_public_subnet_cidrs JSON, e.g. ["172.20.0.0/24","172.20.1.0/24"]'
+        required: false
+        default: ""
+      tfvar_private_app_subnet_cidrs:
+        description: "TF_VAR_private_app_subnet_cidrs JSON"
+        required: false
+        default: ""
+      tfvar_private_db_subnet_cidrs:
+        description: "TF_VAR_private_db_subnet_cidrs JSON"
+        required: false
+        default: ""
+      tfvar_enable_nat_gateway:
+        description: 'TF_VAR_enable_nat_gateway ("true"/"false")'
+        required: false
+        default: ""
+      tfvar_use_eip:
+        description: 'TF_VAR_use_eip ("true"/"false")'
+        required: false
+        default: ""
+      tfvar_azs:
+        description: 'TF_VAR_azs JSON, e.g. ["us-east-1a","us-east-1b"]'
+        required: false
+        default: '["us-east-1a","us-east-1b"]'
+
 permissions:
   contents: read
   actions: write
@@ -55,6 +96,16 @@ jobs:
       TF_VAR_github_owner: ${{ inputs.github_owner }}
       TF_VAR_github_repo: ${{ inputs.github_repo }}
       TF_VAR_github_token: ${{ secrets.GH_ADMIN_TOKEN }}
+      TF_VAR_tfvar_project_name: ${{ inputs.tfvar_project_name }}
+      TF_VAR_tfvar_environment: ${{ inputs.tfvar_environment }}
+      TF_VAR_tfvar_region: ${{ inputs.tfvar_region }}
+      TF_VAR_tfvar_vpc_cidr: ${{ inputs.tfvar_vpc_cidr }}
+      TF_VAR_tfvar_public_subnet_cidrs: ${{ inputs.tfvar_public_subnet_cidrs }}
+      TF_VAR_tfvar_private_app_subnet_cidrs: ${{ inputs.tfvar_private_app_subnet_cidrs }}
+      TF_VAR_tfvar_private_db_subnet_cidrs: ${{ inputs.tfvar_private_db_subnet_cidrs }}
+      TF_VAR_tfvar_enable_nat_gateway: ${{ inputs.tfvar_enable_nat_gateway }}
+      TF_VAR_tfvar_use_eip: ${{ inputs.tfvar_use_eip }}
+      TF_VAR_tfvar_azs: ${{ inputs.tfvar_azs }}
 
     steps:
       - name: Check out repository
@@ -80,7 +131,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.6.0
+          terraform_version: 1.13.3
 
       ###############################################################
       # Configure TEMPORARY AWS credentials for bootstrap ONLY
@@ -129,7 +180,23 @@ jobs:
           terraform -chdir=./bootstrap import -input=false github_actions_variable.tf_state_bucket "${REPO}:TF_STATE_BUCKET" || true
           terraform -chdir=./bootstrap import -input=false github_actions_variable.tf_state_table  "${REPO}:TF_STATE_TABLE"  || true
           terraform -chdir=./bootstrap import -input=false github_actions_variable.tf_state_key    "${REPO}:TF_STATE_KEY"    || true
-          terraform -chdir=./bootstrap import -input=false github_actions_variable.aws_role_arn    "${REPO}:AWS_ROLE_ARN"    || true
+          terraform -chdir=./bootstrap import -input=false github_actions_variable.aws_region                       "${REPO}:AWS_REGION"                      || true
+          terraform -chdir=./bootstrap import -input=false github_actions_variable.tf_state_bucket                  "${REPO}:TF_STATE_BUCKET"                || true
+          terraform -chdir=./bootstrap import -input=false github_actions_variable.tf_state_table                   "${REPO}:TF_STATE_TABLE"                 || true
+          terraform -chdir=./bootstrap import -input=false github_actions_variable.tf_state_key                     "${REPO}:TF_STATE_KEY"                   || true
+          terraform -chdir=./bootstrap import -input=false github_actions_variable.aws_role_arn                     "${REPO}:AWS_ROLE_ARN"                   || true
+
+          terraform -chdir=./bootstrap import -input=false github_actions_variable.tfvar_project_name               "${REPO}:TF_VAR_project_name"            || true
+          terraform -chdir=./bootstrap import -input=false github_actions_variable.tfvar_environment                "${REPO}:TF_VAR_environment"             || true
+          terraform -chdir=./bootstrap import -input=false github_actions_variable.tfvar_region                     "${REPO}:TF_VAR_region"                  || true
+          terraform -chdir=./bootstrap import -input=false github_actions_variable.tfvar_vpc_cidr                   "${REPO}:TF_VAR_vpc_cidr"                || true
+          terraform -chdir=./bootstrap import -input=false github_actions_variable.tfvar_public_subnet_cidrs        "${REPO}:TF_VAR_public_subnet_cidrs"     || true
+          terraform -chdir=./bootstrap import -input=false github_actions_variable.tfvar_private_app_subnet_cidrs   "${REPO}:TF_VAR_private_app_subnet_cidrs"|| true
+          terraform -chdir=./bootstrap import -input=false github_actions_variable.tfvar_private_db_subnet_cidrs    "${REPO}:TF_VAR_private_db_subnet_cidrs" || true
+          terraform -chdir=./bootstrap import -input=false github_actions_variable.tfvar_enable_nat_gateway         "${REPO}:TF_VAR_enable_nat_gateway"      || true
+          terraform -chdir=./bootstrap import -input=false github_actions_variable.tfvar_use_eip                    "${REPO}:TF_VAR_use_eip"                 || true
+          terraform -chdir=./bootstrap import -input=false github_actions_variable.tfvar_azs                        "${REPO}:TF_VAR_azs"                     || true
+
           echo "Repo variable imports done."
 
       - name: Import existing S3 bucket if present
