@@ -1,5 +1,5 @@
 # scripts/export_tfvars_ci.py
-import json, os, sys
+import json, os, sys, re
 
 GITHUB_ENV = os.environ.get("GITHUB_ENV")
 if not GITHUB_ENV:
@@ -9,34 +9,38 @@ if not GITHUB_ENV:
 def normalize_list(raw: str) -> str:
     """
     Accepts:
-      - '["a","b"]' (valid JSON) -> pass through
-      - [a,b] (no quotes) -> -> '["a","b"]'
+      - '["a","b"]' (JSON) -> pass through
+      - '["a", "b"]' (JSON) -> pass through
+      - [a,b] or [a, b] (no quotes) -> -> '["a","b"]'
       - '' -> ''
-    Returns a JSON string or ''.
+    Returns a JSON string or '' if empty.
     """
     if not raw or raw.strip() == "":
         return ""
     s = raw.strip()
-    # If already valid JSON array, keep it.
+    # if already valid JSON array, keep it
     try:
         arr = json.loads(s)
         if isinstance(arr, list):
             return json.dumps(arr)
     except Exception:
         pass
-    # Convert [a,b] to ["a","b"]
-    if s.startswith("[") and s.endswith("]"):
+    # strip outer [ ]
+    if s[0] == "[" and s[-1] == "]":
         inner = s[1:-1].strip()
         if not inner:
             return "[]"
+        # split on commas not inside quotes (we assume no quotes in bad case)
         parts = [p.strip() for p in inner.split(",")]
+        # drop surrounding quotes if any, then re-quote
         cleaned = []
         for p in parts:
-            # Drop surrounding quotes if they exist
-            if p.startswith('"') and p.endswith('"'): p = p[1:-1]
+            p = p.strip()
+            if p.startswith('"') and p.endswith('"'):
+                p = p[1:-1]
             cleaned.append(p)
         return json.dumps(cleaned)
-    # Fallback: single value to list
+    # fallback: single value
     return json.dumps([s])
 
 def write_env(k: str, v: str):
@@ -53,7 +57,7 @@ if not aws_region:
     sys.exit(1)
 write_env("TF_VAR_region", aws_region)
 
-# Scalar passthroughs
+# Scalar passthroughs (exactly as provided)
 for name in [
     "project_name",
     "environment",
