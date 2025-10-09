@@ -30,7 +30,7 @@ jobs:
           set -eu
           [ -n "${{ secrets.AWS_ACCESS_KEY_ID }}" ]     || { echo "Missing secret: AWS_ACCESS_KEY_ID"; exit 1; }
           [ -n "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ] || { echo "Missing secret: AWS_SECRET_ACCESS_KEY"; exit 1; }
-          [ -n "${{ secrets.GH_ADMIN_TOKEN }}" ]        || { echo "Missing secret: GH_ADMIN_TOKEN"; exit 1; }
+          [ -n "${{ secrets.GH_TOKEN_ADMIN }}" ]        || { echo "Missing secret: GH_TOKEN_ADMIN"; exit 1; }
           [ -n "${{ vars.AWS_REGION }}" ]               || { echo "Missing variable: AWS_REGION"; exit 1; }
           if [[ ! "${{ vars.AWS_REGION }}" =~ ^[a-z]+-[a-z]+-[0-9]+$ ]]; then
             echo "Invalid AWS_REGION: '${{ vars.AWS_REGION }}' (expected 'us-east-1', 'eu-west-1', etc.)"
@@ -98,7 +98,7 @@ jobs:
           set_kv TF_VAR_tf_state_key      "$KEY"
           set_kv TF_VAR_github_owner      "$OWNER"
           set_kv TF_VAR_github_repo       "$REPO"
-          set_kv TF_VAR_github_token      "${{ secrets.GH_ADMIN_TOKEN }}"
+          set_kv TF_VAR_github_token      "${{ secrets.GH_TOKEN_ADMIN }}"
 
           # Optional TF_VAR_* that we want to materialize as GitHub Variables via Terraform
           set_kv TF_VAR_tfvar_project_name        "${{ vars.TF_VAR_project_name }}"
@@ -206,7 +206,7 @@ jobs:
         working-directory: ./bootstrap
         env:
           # Core TF_VAR_* come from $GITHUB_ENV set in Resolve config
-          TF_VAR_github_token: ${{ secrets.GH_ADMIN_TOKEN }}
+          TF_VAR_github_token: ${{ secrets.GH_TOKEN_ADMIN }}
         run: terraform apply -auto-approve -input=false
 
       - name: Show outputs
