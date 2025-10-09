@@ -103,10 +103,10 @@ variable "azs" {
 # }
 
 
-variable "ssh_allowed_cidr" {
-  type    = string
-  default = "197.248.148.214/32"
-}
+# variable "ssh_allowed_cidr" {
+#   type    = string
+#   default = "197.248.148.214/32"
+# }
 
 # variable "enable_nat_instance" {
 #   type    = bool
