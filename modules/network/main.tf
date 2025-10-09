@@ -118,21 +118,23 @@ resource "aws_instance" "nat" {
 }
 
 # Route private route tables to NAT instance
+# Route private route tables to NAT instance
 resource "aws_route" "private_to_nat" {
   count                  = var.enable_nat_instance && !var.enable_nat_gateway ? length(module.vpc.private_route_table_ids) : 0
   route_table_id         = module.vpc.private_route_table_ids[count.index]
   destination_cidr_block = "0.0.0.0/0"
-  instance_id            = aws_instance.nat[0].id
+  # IMPORTANT: instance_id is not allowed; use the ENI of the NAT instance
+  network_interface_id = aws_instance.nat[0].primary_network_interface_id
 
   depends_on = [aws_instance.nat]
 }
 
-# Route db route tables to NAT instance (if you want db subnets to have egress)
+# Route db route tables to NAT instance (if DB subnets need egress)
 resource "aws_route" "db_to_nat" {
   count                  = var.enable_nat_instance && !var.enable_nat_gateway ? length(module.vpc.database_route_table_ids) : 0
   route_table_id         = module.vpc.database_route_table_ids[count.index]
   destination_cidr_block = "0.0.0.0/0"
-  instance_id            = aws_instance.nat[0].id
+  network_interface_id   = aws_instance.nat[0].primary_network_interface_id
 
   depends_on = [aws_instance.nat]
 }
