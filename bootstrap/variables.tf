@@ -53,3 +53,49 @@ variable "github_token" {
   type        = string
   default     = "" # Defaulting to empty string is okay for a secret/token variable.
 }
+
+
+
+variable "tfvar_azs" {
+  type    = string
+  default = "[\"us-east-1a\",\"us-east-1b\"]"
+}
+
+variable "tfvar_project_name" {
+  type    = string
+  default = "web-apps"
+}
+variable "tfvar_environment" {
+  type    = string
+  default = "prod"
+}
+variable "tfvar_region" {
+  type    = string
+  default = "us-east-1"
+}
+variable "tfvar_vpc_cidr" {
+  type    = string
+  default = "172.20.0.0/16"
+}
+# Supply lists as JSON strings, e.g. ["172.20.0.0/24","172.20.1.0/24"]
+variable "tfvar_public_subnet_cidrs" {
+  type    = string
+  default = "[\"172.20.0.0/24\",\"172.20.1.0/24\"]"
+}
+variable "tfvar_private_app_subnet_cidrs" {
+  type    = string
+  default = "[\"172.20.10.0/24\",\"172.20.11.0/24\"]"
+}
+variable "tfvar_private_db_subnet_cidrs" {
+  type    = string
+  default = "[\"172.20.20.0/24\",\"172.20.21.0/24\"]"
+}
+# booleans as "true"/"false"
+variable "tfvar_enable_nat_gateway" {
+  type    = string
+  default = "false"
+}
+variable "tfvar_use_eip" {
+  type    = string
+  default = "false"
+}

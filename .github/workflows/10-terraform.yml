@@ -1,9 +1,3 @@
-###############################################################
-# 10 - Terraform (plan on branches, apply on main)
-#  - Plan on any push/PR
-#  - Apply only on push to main (gated by environment "production")
-#  - S3 backend only (no DynamoDB); per-branch workspace; -lock=false
-###############################################################
 name: 10 - Terraform (plan on branches, apply on main)
 
 on:
@@ -23,7 +17,6 @@ concurrency:
 jobs:
   tf:
     runs-on: ubuntu-latest
-    # Gate apply behind an environment with reviewers
     environment: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && 'production' || '' }}
 
     steps:
@@ -52,8 +45,28 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
           role-session-name: gha-tf-${{ github.run_id }}
 
-      - name: Sanity — whoami
-        run: aws sts get-caller-identity
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Export TF_VARs (normalized)
+        run: python scripts/export_tfvars_ci.py
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+
+          RAW_TF_VAR_project_name: ${{ vars.TF_VAR_project_name }}
+          RAW_TF_VAR_environment: ${{ vars.TF_VAR_environment }}
+          RAW_TF_VAR_vpc_cidr: ${{ vars.TF_VAR_vpc_cidr }}
+
+          RAW_TF_VAR_azs: ${{ vars.TF_VAR_azs }}
+          RAW_TF_VAR_public_subnet_cidrs: ${{ vars.TF_VAR_public_subnet_cidrs }}
+          RAW_TF_VAR_private_app_subnet_cidrs: ${{ vars.TF_VAR_private_app_subnet_cidrs }}
+          RAW_TF_VAR_private_db_subnet_cidrs: ${{ vars.TF_VAR_private_db_subnet_cidrs }}
+
+          RAW_TF_VAR_enable_nat_gateway: ${{ vars.TF_VAR_enable_nat_gateway }}
+          RAW_TF_VAR_use_eip: ${{ vars.TF_VAR_use_eip }}
+          RAW_TF_VAR_ssh_allowed_cidr: ${{ vars.TF_VAR_ssh_allowed_cidr }}
 
       - name: Terraform Init (S3 backend only) + Workspace
         shell: bash
@@ -73,8 +86,6 @@ jobs:
           terraform workspace select "$WS" || terraform workspace new "$WS"
 
       - name: Terraform fmt & validate & plan
-        env:
-          TF_VAR_region: ${{ vars.AWS_REGION }}
         run: |
           terraform fmt -check
           terraform validate
@@ -90,6 +101,8 @@ jobs:
 
       - name: Terraform Apply (only on main; gated by environment)
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        env:
-          TF_VAR_region: ${{ vars.AWS_REGION }}
         run: terraform apply -input=false -auto-approve -lock=false tfplan.bin
+
+      - name: Post-apply smoke test (EC2 via SSM)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.ENABLE_COMPUTE_TEST == 'true'
+        run: echo "Compute test is gated off until EC2/SSM module is enabled."

@@ -216,3 +216,75 @@ resource "github_actions_variable" "tf_state_key" {
   variable_name = "TF_STATE_KEY"
   value         = var.tf_state_key
 }
+
+
+# Only create when non-empty (so we don't overwrite unintentionally)
+
+resource "github_actions_variable" "tfvar_project_name" {
+  count         = var.tfvar_project_name != "" ? 1 : 0
+  repository    = var.github_repo
+  variable_name = "TF_VAR_project_name"
+  value         = var.tfvar_project_name
+}
+
+resource "github_actions_variable" "tfvar_environment" {
+  count         = var.tfvar_environment != "" ? 1 : 0
+  repository    = var.github_repo
+  variable_name = "TF_VAR_environment"
+  value         = var.tfvar_environment
+}
+
+resource "github_actions_variable" "tfvar_region" {
+  count         = var.tfvar_region != "" ? 1 : 0
+  repository    = var.github_repo
+  variable_name = "TF_VAR_region"
+  value         = var.tfvar_region
+}
+
+resource "github_actions_variable" "tfvar_vpc_cidr" {
+  count         = var.tfvar_vpc_cidr != "" ? 1 : 0
+  repository    = var.github_repo
+  variable_name = "TF_VAR_vpc_cidr"
+  value         = var.tfvar_vpc_cidr
+}
+
+resource "github_actions_variable" "tfvar_public_subnet_cidrs" {
+  count         = var.tfvar_public_subnet_cidrs != "" ? 1 : 0
+  repository    = var.github_repo
+  variable_name = "TF_VAR_public_subnet_cidrs"
+  value         = var.tfvar_public_subnet_cidrs # JSON string list
+}
+
+resource "github_actions_variable" "tfvar_private_app_subnet_cidrs" {
+  count         = var.tfvar_private_app_subnet_cidrs != "" ? 1 : 0
+  repository    = var.github_repo
+  variable_name = "TF_VAR_private_app_subnet_cidrs"
+  value         = var.tfvar_private_app_subnet_cidrs
+}
+
+resource "github_actions_variable" "tfvar_private_db_subnet_cidrs" {
+  count         = var.tfvar_private_db_subnet_cidrs != "" ? 1 : 0
+  repository    = var.github_repo
+  variable_name = "TF_VAR_private_db_subnet_cidrs"
+  value         = var.tfvar_private_db_subnet_cidrs
+}
+
+resource "github_actions_variable" "tfvar_enable_nat_gateway" {
+  count         = var.tfvar_enable_nat_gateway != "" ? 1 : 0
+  repository    = var.github_repo
+  variable_name = "TF_VAR_enable_nat_gateway"
+  value         = var.tfvar_enable_nat_gateway # "true" / "false"
+}
+
+resource "github_actions_variable" "tfvar_use_eip" {
+  count         = var.tfvar_use_eip != "" ? 1 : 0
+  repository    = var.github_repo
+  variable_name = "TF_VAR_use_eip"
+  value         = var.tfvar_use_eip # "true" / "false"
+}
+resource "github_actions_variable" "tfvar_azs" {
+  count         = var.tfvar_azs != "" ? 1 : 0
+  repository    = var.github_repo
+  variable_name = "TF_VAR_azs"
+  value         = var.tfvar_azs
+}

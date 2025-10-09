@@ -5,7 +5,7 @@
 # - GitHub: write repo variables so later workflows can use them
 ###############################################################
 terraform {
-  required_version = ">= 1.5.0, < 2.0.0"
+  required_version = ">= 1.13.0, < 2.0.0"
 
   required_providers {
     aws = {
