@@ -37,6 +37,31 @@ module "iam_instance_profile" {
   }
 }
 
+module "compute_min_host" {
+  source = "./modules/compute_min_host"
+
+  project_name = var.project_name
+  environment  = var.environment
+
+  ami_id        = local.ami_id
+  instance_type = var.instance_type
+
+  subnet_id = module.network.public_subnet_ids[0]
+
+  associate_public_ip   = true
+  key_name              = var.key_name
+  instance_profile_name = module.iam_instance_profile.name
+
+  open_ssh_22      = false
+  ssh_allowed_cidr = var.ssh_allowed_cidr
+
+  tags = {
+    Project     = var.project_name
+    Environment = var.environment
+    Role        = "app-host-min"
+  }
+}
+
 
 # module "compute_app_host" {
 #   # FIX: directory name uses underscore, not hyphen
