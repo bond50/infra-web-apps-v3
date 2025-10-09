@@ -30,6 +30,30 @@ resource "aws_security_group" "this" {
   description = "Minimal host SG"
   # Gets the VPC ID needed for the SG from the Subnet data source defined below.
   vpc_id = data.aws_subnet.selected.vpc_id
+  dynamic "ingress" {
+    for_each = var.open_http_80 ? [1] : []
+    content {
+      description      = "HTTP"
+      from_port        = 80
+      to_port          = 80
+      protocol         = "tcp"
+      cidr_blocks      = [var.http_allowed_cidr]
+      ipv6_cidr_blocks = ["::/0"]
+    }
+  }
+
+  # --- NEW: optional HTTPS (443)
+  dynamic "ingress" {
+    for_each = var.open_https_443 ? [1] : []
+    content {
+      description      = "HTTPS"
+      from_port        = 443
+      to_port          = 443
+      protocol         = "tcp"
+      cidr_blocks      = [var.https_allowed_cidr]
+      ipv6_cidr_blocks = ["::/0"]
+    }
+  }
 
   # Ingress (Incoming) Rules: Defines what traffic is allowed *into* the EC2 instance.
   dynamic "ingress" {

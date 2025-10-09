@@ -43,3 +43,24 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+
+# Toggle HTTP/HTTPS ingress (default: closed)
+variable "open_http_80" {
+  type    = bool
+  default = false
+}
+variable "open_https_443" {
+  type    = bool
+  default = false
+}
+
+# Allowed CIDRs when open (defaults: world)
+variable "http_allowed_cidr" {
+  type    = string
+  default = "0.0.0.0/0"
+}
+variable "https_allowed_cidr" {
+  type    = string
+  default = "0.0.0.0/0"
+}

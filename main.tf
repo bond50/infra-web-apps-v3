@@ -54,6 +54,10 @@ module "compute_min_host" {
 
   open_ssh_22      = false
   ssh_allowed_cidr = var.ssh_allowed_cidr
+  open_http_80     = true
+  open_https_443   = true
+  # http_allowed_cidr  = "0.0.0.0/0"
+  # https_allowed_cidr = "0.0.0.0/0
 
   tags = {
     Project     = var.project_name
