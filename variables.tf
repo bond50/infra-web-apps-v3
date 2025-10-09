@@ -34,7 +34,10 @@ variable "enable_nat_gateway" {
 
 
 
-variable "project_name" { type = string }
+variable "project_name" {
+  type    = string
+  default = "web-apps"
+}
 variable "environment" {
   type    = string
   default = "prod"
@@ -72,7 +75,10 @@ variable "environment" {
 # }
 
 # --- VPC / Subnets / NAT ---
-variable "vpc_cidr" { type = string }
+variable "vpc_cidr" {
+  type    = string
+  default = "172.20.0.0/16"
+}
 variable "azs" {
   type    = list(string)
   default = ["us-east-1a", "us-east-1b"]
@@ -97,12 +103,12 @@ variable "azs" {
 # }
 
 
-variable "ssh_allowed_cidr" {
-  type    = string
-  default = "197.248.148.214/32"
-}
+# variable "ssh_allowed_cidr" {
+#   type    = string
+#   default = "197.248.148.214/32"
+# }
 
-variable "enable_nat_instance" {
-  type    = bool
-  default = false
-}
+# variable "enable_nat_instance" {
+#   type    = bool
+#   default = false
+# }
