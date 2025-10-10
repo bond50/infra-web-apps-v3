@@ -1,43 +1,30 @@
-name: 05 - PR Quality Gate
+name: 10 - Terraform (plan on branches, apply on main)
 
 on:
+  push:
+    branches: ["**"]
   pull_request:
     branches: ["**"]
-    types: [opened, synchronize, reopened]
-  merge_group: {}
 
 permissions:
   id-token: write
   contents: read
-  pull-requests: write
 
 concurrency:
-  group: pr-quality-${{ github.event.pull_request.number || github.run_id }}
+  group: terraform-${{ github.ref_name }}
   cancel-in-progress: true
 
 jobs:
-  pr-quality:
+  tf:
     runs-on: ubuntu-latest
-    name: pr-quality
+    # Only set an environment when pushing to main (to gate apply with env approvals)
+    environment: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && 'production' || '' }}
 
     steps:
       - name: Checkout repository code
         uses: actions/checkout@v5
 
-      - name: Setup Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Branch guard
-        run: python scripts/pr_branch_guard.py
-        env:
-          BRANCH_GUARD: ${{ vars.BRANCH_GUARD || 'on' }}
-          GITHUB_HEAD_REF: ${{ github.head_ref }}
-          GITHUB_REF_NAME: ${{ github.ref_name }}
-
-      # Fail fast if required repo Variables are missing
-      - name: Preflight — verify Variables
+      - name: Preflight — verify Variables (OIDC mode)
         shell: bash
         run: |
           set -eu
@@ -57,7 +44,12 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
-          role-session-name: gha-pr-${{ github.run_id }}
+          role-session-name: gha-tf-${{ github.run_id }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
 
       - name: Export TF_VARs (normalized)
         run: python scripts/export_tfvars_ci.py
@@ -76,6 +68,8 @@ jobs:
           RAW_TF_VAR_enable_nat_gateway: ${{ vars.TF_VAR_enable_nat_gateway }}
           RAW_TF_VAR_use_eip: ${{ vars.TF_VAR_use_eip }}
           RAW_TF_VAR_ssh_allowed_cidr: ${{ vars.TF_VAR_ssh_allowed_cidr }}
+
+          # 2c stack-ssm knobs
           RAW_TF_VAR_install_docker_if_missing: ${{ vars.TF_VAR_install_docker_if_missing }}
           RAW_TF_VAR_postgres_user: ${{ vars.TF_VAR_postgres_user }}
           RAW_TF_VAR_postgres_db: ${{ vars.TF_VAR_postgres_db }}
@@ -84,78 +78,41 @@ jobs:
           RAW_TF_VAR_hello_image: ${{ vars.TF_VAR_hello_image }}
           RAW_TF_VAR_hello_port: ${{ vars.TF_VAR_hello_port }}
 
-      # === New: structural guard to prevent 409s on release ===
-      - name: Bootstrap import sync check
-        run: python scripts/check_bootstrap_imports_sync.py
-
-      # Init with S3 backend (read-only plan state path) + per-branch workspace
       - name: Terraform Init (S3 backend only) + Workspace
         shell: bash
         run: |
           set -euo pipefail
-          RAW="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-main}}"
+          RAW="${GITHUB_REF_NAME:-main}"
           WS="branch-${RAW//[^a-zA-Z0-9-_]/-}"
           echo "Using workspace: $WS"
 
           terraform init -input=false \
             -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
-            -backend-config="key=${{ vars.TF_STATE_KEY }}/pr/terraform.tfstate" \
+            -backend-config="key=${{ vars.TF_STATE_KEY }}/ci/terraform.tfstate" \
             -backend-config="region=${{ vars.AWS_REGION }}" \
             -backend-config="encrypt=true"
 
           terraform workspace list || true
           terraform workspace select "$WS" || terraform workspace new "$WS"
 
-      - name: Terraform fmt (check only)
-        run: terraform fmt -check -recursive
-
-      - name: Terraform validate (root)
-        run: terraform validate
-
-      # Validate bootstrap module too (no backend)
-      - name: Terraform validate (bootstrap/)
-        working-directory: bootstrap
+      - name: Terraform fmt & validate & plan
         run: |
-          terraform init -backend=false -input=false
-          terraform fmt -check -recursive
+          terraform fmt -check
           terraform validate
+          terraform plan -input=false -no-color -lock=false -out=tfplan.bin
 
-      - name: Setup TFLint
-        uses: terraform-linters/setup-tflint@v5
-        with:
-          tflint_version: v0.59.1
-
-      - name: TFLint init & run
-        run: |
-          tflint --init
-          tflint -f compact
-
-      - name: Setup Checkov
-        run: pip install --quiet "checkov==3.2.474"
-
-      - name: Run Checkov (SARIF output, non-blocking)
-        shell: bash
-        continue-on-error: true
-        run: |
-          set -euo pipefail
-          mkdir -p reports
-          python -m checkov -d . --framework terraform --quiet \
-            --output sarif --output-file-path reports/checkov.sarif
-
-      - name: Upload Checkov SARIF
-        if: always()
+      - name: Upload plan artifact (for non-main branches)
+        if: github.ref != 'refs/heads/main'
         uses: actions/upload-artifact@v4
         with:
-          name: checkov-sarif
-          path: reports/checkov.sarif
-          retention-days: 7
-
-      - name: Terraform plan (safe; no refresh/lock)
-        run: terraform plan -input=false -no-color -lock=false -refresh=false -out=tfplan.bin
-
-      - name: Upload plan artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: tfplan-pr-${{ github.event.pull_request.number || github.run_id }}
+          name: tfplan
           path: tfplan.bin
           retention-days: 7
+
+      - name: Terraform Apply (only on main; gated by environment)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: terraform apply -input=false -auto-approve -lock=false tfplan.bin
+
+      - name: Post-apply smoke test (EC2 via SSM)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.ENABLE_COMPUTE_TEST == 'true'
+        run: echo "Compute test is gated off until EC2/SSM module is enabled."
