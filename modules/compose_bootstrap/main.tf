@@ -20,14 +20,11 @@ resource "aws_ssm_parameter" "pg_password" {
   name        = "/projects/${var.project_name}/${var.environment}/stack/pg_password"
   type        = "SecureString"
   value       = var.postgres_password != "" ? var.postgres_password : random_password.pg.result
+  overwrite   = true # <-- add this
   description = "Docker Postgres password for local container"
-  overwrite   = true
   tags        = local.tags
-
-  lifecycle {
-    prevent_destroy = true
-  }
 }
+
 
 
 # Compose YAML (Postgres 17 with optional hello)
