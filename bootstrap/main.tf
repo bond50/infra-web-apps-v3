@@ -296,3 +296,54 @@ resource "github_actions_variable" "tfvar_ssh_allowed_cidr" {
   variable_name = "TF_VAR_ssh_allowed_cidr"
   value         = var.tfvar_ssh_allowed_cidr
 }
+
+
+
+resource "github_actions_variable" "tfvar_install_docker_if_missing" {
+  count         = var.tfvar_install_docker_if_missing != "" ? 1 : 0
+  repository    = var.github_repo
+  variable_name = "TF_VAR_install_docker_if_missing"
+  value         = var.tfvar_install_docker_if_missing
+}
+
+resource "github_actions_variable" "tfvar_postgres_user" {
+  count         = var.tfvar_postgres_user != "" ? 1 : 0
+  repository    = var.github_repo
+  variable_name = "TF_VAR_postgres_user"
+  value         = var.tfvar_postgres_user
+}
+
+resource "github_actions_variable" "tfvar_postgres_db" {
+  count         = var.tfvar_postgres_db != "" ? 1 : 0
+  repository    = var.github_repo
+  variable_name = "TF_VAR_postgres_db"
+  value         = var.tfvar_postgres_db
+}
+
+resource "github_actions_variable" "tfvar_postgres_port" {
+  count         = var.tfvar_postgres_port != "" ? 1 : 0
+  repository    = var.github_repo
+  variable_name = "TF_VAR_postgres_port"
+  value         = var.tfvar_postgres_port
+}
+
+resource "github_actions_variable" "tfvar_enable_hello_http" {
+  count         = var.tfvar_enable_hello_http != "" ? 1 : 0
+  repository    = var.github_repo
+  variable_name = "TF_VAR_enable_hello_http"
+  value         = var.tfvar_enable_hello_http
+}
+
+resource "github_actions_variable" "tfvar_hello_image" {
+  count         = var.tfvar_hello_image != "" ? 1 : 0
+  repository    = var.github_repo
+  variable_name = "TF_VAR_hello_image"
+  value         = var.tfvar_hello_image
+}
+
+resource "github_actions_variable" "tfvar_hello_port" {
+  count         = var.tfvar_hello_port != "" ? 1 : 0
+  repository    = var.github_repo
+  variable_name = "TF_VAR_hello_port"
+  value         = var.tfvar_hello_port
+}

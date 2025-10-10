@@ -66,8 +66,18 @@ tfvar_resources = {
     "github_actions_variable.tfvar_enable_nat_gateway":       "TF_VAR_enable_nat_gateway",
     "github_actions_variable.tfvar_use_eip":                  "TF_VAR_use_eip",
     "github_actions_variable.tfvar_azs":                      "TF_VAR_azs",
-    "github_actions_variable.tfvar_ssh_allowed_cidr":         "TF_VAR_ssh_allowed_cidr",
+    
+    "github_actions_variable.tfvar_install_docker_if_missing": "TF_VAR_install_docker_if_missing",
+    "github_actions_variable.tfvar_postgres_user":             "TF_VAR_postgres_user",
+    "github_actions_variable.tfvar_postgres_db":               "TF_VAR_postgres_db",
+    "github_actions_variable.tfvar_postgres_port":             "TF_VAR_postgres_port",
+    "github_actions_variable.tfvar_enable_hello_http":         "TF_VAR_enable_hello_http",
+    "github_actions_variable.tfvar_hello_image":               "TF_VAR_hello_image",
+    "github_actions_variable.tfvar_hello_port":                "TF_VAR_hello_port",
+    "github_actions_variable.tfvar_ssh_allowed_cidr":          "TF_VAR_ssh_allowed_cidr",
 }
+
+
 
 for addr, gh_name in tfvar_resources.items():
     # If the pipeline didn’t pass a value, the TF resource has count=0 → skip import.
