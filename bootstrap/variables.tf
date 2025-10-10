@@ -105,3 +105,33 @@ variable "tfvar_ssh_allowed_cidr" {
   type    = string
   default = "197.248.148.214/32"
 }
+
+
+variable "tfvar_install_docker_if_missing" {
+  type    = string
+  default = ""
+} # "true"/"false"
+variable "tfvar_postgres_user" {
+  type    = string
+  default = ""
+}
+variable "tfvar_postgres_db" {
+  type    = string
+  default = ""
+}
+variable "tfvar_postgres_port" {
+  type    = string
+  default = ""
+} # "5432"
+variable "tfvar_enable_hello_http" {
+  type    = string
+  default = ""
+} # "true"/"false"
+variable "tfvar_hello_image" {
+  type    = string
+  default = ""
+}
+variable "tfvar_hello_port" {
+  type    = string
+  default = ""
+} # "8080"
