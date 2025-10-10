@@ -50,8 +50,8 @@ for k in [
     "TF_VAR_project_name","TF_VAR_environment","TF_VAR_region","TF_VAR_vpc_cidr",
     "TF_VAR_public_subnet_cidrs","TF_VAR_private_app_subnet_cidrs","TF_VAR_private_db_subnet_cidrs",
     "TF_VAR_enable_nat_gateway","TF_VAR_use_eip","TF_VAR_azs",
-    "TF_VAR_install_docker_if_missing","TF_VAR_postgres_user","TF_VAR_postgres_db","TF_VAR_postgres_port",
-    "TF_VAR_enable_hello_http","TF_VAR_hello_image","TF_VAR_hello_port",
+   "TF_VAR_install_docker_if_missing","TF_VAR_postgres_user","TF_VAR_postgres_db","TF_VAR_postgres_port",
+    "TF_VAR_enable_hello_http","TF_VAR_hello_image","TF_VAR_hello_port","TF_VAR_ssh_allowed_cidr",
 ]:
     opt(k)
 
