@@ -73,16 +73,16 @@ module "compose_bootstrap" {
 
   project_name = var.project_name
   environment  = var.environment
-  instance_id  = module.compute_min_host.id
 
-  # Docker (Ubuntu official flow)
+  # Docker (Ubuntu)
   install_docker_if_missing = var.install_docker_if_missing
   stack_dir                 = var.stack_dir
+
   # Postgres on the host (compose)
   postgres_user = var.postgres_user
   postgres_db   = var.postgres_db
   postgres_port = var.postgres_port
-  # postgres_password not passed on purpose (empty default -> auto-generate)
+  # postgres_password left blank → auto-generate to SSM
 
   # Optional hello
   enable_hello_http = var.enable_hello_http
