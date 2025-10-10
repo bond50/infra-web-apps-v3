@@ -1,11 +1,8 @@
-name: 90 - Terraform Destroy (manual)
+name: 91 - Terraform Apply (manual)
 
 on:
     workflow_dispatch:
         inputs:
-            confirm:
-                description: "Type exactly: I UNDERSTAND THIS WILL DESTROY ALL RESOURCES"
-                required: true
             workspace:
                 description: "Terraform workspace (e.g., default/prod/staging)"
                 required: false
@@ -18,26 +15,33 @@ on:
                 description: "Suffix under TF_STATE_KEY (e.g., live/terraform.tfstate)"
                 required: false
                 default: "live/terraform.tfstate"
-            plan_only:
-                description: "Only plan -destroy (do not apply)"
-                required: false
+            replace_compute_only:
+                description: "Force-recreate only the minimal host (EC2)"
                 type: boolean
+                required: false
                 default: false
+            plan_only:
+                description: "Only plan (do not apply)"
+                type: boolean
+                required: false
+                default: false
+            confirm:
+                description: "Optional safety: type APPLY to continue (leave blank to skip)"
+                required: false
+                default: ""
 
 permissions:
     id-token: write
     contents: read
 
 concurrency:
-    group: destroy-${{ github.ref }}
+    group: apply-${{ github.ref }}
     cancel-in-progress: false
 
 jobs:
-    tf-destroy:
-        if: ${{ github.ref == 'refs/heads/main' }}
-        name: terraform-destroy
+    tf-apply:
+        name: terraform-apply
         runs-on: ubuntu-latest
-        environment: production
 
         defaults:
             run:
@@ -50,11 +54,12 @@ jobs:
             TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
 
         steps:
-            - name: Guardrail — exact confirmation phrase
+            - name: Optional guard — require APPLY
+              if: ${{ inputs.confirm != '' }}
               shell: bash
               run: |
                   set -euo pipefail
-                  if [ "${{ inputs.confirm }}" != "I UNDERSTAND THIS WILL DESTROY ALL RESOURCES" ]; then
+                  if [ "${{ inputs.confirm }}" != "APPLY" ]; then
                     echo "Refusing: confirmation phrase mismatch."
                     exit 1
                   fi
@@ -73,7 +78,7 @@ jobs:
               with:
                   role-to-assume: ${{ env.AWS_ROLE_ARN }}
                   aws-region: ${{ env.AWS_REGION }}
-                  role-session-name: gha-tf-destroy-${{ github.run_id }}
+                  role-session-name: gha-tf-apply-${{ github.run_id }}
 
             - name: Terraform init (S3 backend)
               shell: bash
@@ -93,30 +98,42 @@ jobs:
                   terraform workspace select "${{ inputs.workspace }}" || terraform workspace new "${{ inputs.workspace }}"
                   terraform workspace show
 
-            - name: Plan -destroy (always)
+            - name: Build replace flags (optional)
+              id: flags
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  REPLACE_ARGS=""
+                  if [ "${{ inputs.replace_compute_only }}" = "true" ]; then
+                    # This address matches the minimal host EC2 in your repo
+                    REPLACE_ARGS="-replace=module.compute_min_host.aws_instance.this"
+                  fi
+                  echo "replace_args=$REPLACE_ARGS" >> "$GITHUB_OUTPUT"
+
+            - name: Terraform plan
               shell: bash
               env:
                   TF_VAR_region: ${{ env.AWS_REGION }}
               run: |
                   set -euo pipefail
-                  terraform plan -destroy -input=false -no-color -out=tfplan.destroy
+                  terraform plan -input=false -no-color ${{ steps.flags.outputs.replace_args }} -out=tfplan.apply
 
-            - name: Upload destroy plan
+            - name: Upload apply plan
               uses: actions/upload-artifact@v4
               with:
-                  name: tfplan-destroy-${{ github.run_number }}
-                  path: ${{ inputs.directory }}/tfplan.destroy
+                  name: tfplan-apply-${{ github.run_number }}
+                  path: ${{ inputs.directory }}/tfplan.apply
                   retention-days: 7
 
             - name: Stop if plan_only
               if: ${{ inputs.plan_only }}
-              run: echo "Plan-only requested. Exiting before destroy."
+              run: echo "Plan-only requested. Exiting before apply."
 
-            - name: Apply destroy plan (irreversible)
+            - name: Apply plan
               if: ${{ !inputs.plan_only }}
               shell: bash
               env:
                   TF_VAR_region: ${{ env.AWS_REGION }}
               run: |
                   set -euo pipefail
-                  terraform apply -input=false -no-color -auto-approve tfplan.destroy
+                  terraform apply -input=false -no-color -auto-approve tfplan.apply
