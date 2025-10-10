@@ -155,3 +155,9 @@ variable "hello_port" {
   type    = number
   default = 8080
 }
+variable "stack_dir" {
+  type    = string
+  default = "/opt/webstack"
+}
+
+

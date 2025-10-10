@@ -59,6 +59,8 @@ module "compute_min_host" {
   # http_allowed_cidr  = "0.0.0.0/0"
   # https_allowed_cidr = "0.0.0.0/0
 
+  user_data = module.compose_bootstrap.user_data
+
   tags = {
     Project     = var.project_name
     Environment = var.environment
@@ -66,20 +68,21 @@ module "compute_min_host" {
   }
 }
 
-module "stack_ssm" {
-  source = "./modules/stack-ssm"
+module "compose_bootstrap" {
+  source = "./modules/compose_bootstrap"
 
-  project_name              = var.project_name
-  environment               = var.environment
-  instance_id               = module.compute_min_host.id
+  project_name = var.project_name
+  environment  = var.environment
+  stack_dir    = var.stack_dir
+
   install_docker_if_missing = var.install_docker_if_missing
-  postgres_user             = var.postgres_user
-  postgres_db               = var.postgres_db
-  postgres_port             = var.postgres_port
-  # leave empty to auto-generate into SSM
-  postgres_password = var.postgres_password
 
-  # Optional hello service
+  postgres_user = var.postgres_user
+  # leave password empty to auto-generate & store in SSM:
+  postgres_password = "" # or set explicitly via TF_VAR_postgres_password
+  postgres_db       = var.postgres_db
+  postgres_port     = var.postgres_port
+
   enable_hello_http = var.enable_hello_http
   hello_image       = var.hello_image
   hello_port        = var.hello_port
