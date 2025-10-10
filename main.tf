@@ -46,11 +46,12 @@ module "compute_min_host" {
   ami_id        = local.ami_id
   instance_type = var.instance_type
 
-  subnet_id             = module.network.public_subnet_ids[0]
-  user_data             = module.compose_bootstrap.user_data
-  associate_public_ip   = true
-  key_name              = var.key_name
-  instance_profile_name = module.iam_instance_profile.name
+  subnet_id                   = module.network.public_subnet_ids[0]
+  user_data                   = module.compose_bootstrap.user_data
+  user_data_replace_on_change = true
+  associate_public_ip         = true
+  key_name                    = var.key_name
+  instance_profile_name       = module.iam_instance_profile.name
 
   open_ssh_22      = false
   ssh_allowed_cidr = var.ssh_allowed_cidr
