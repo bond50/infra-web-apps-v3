@@ -68,8 +68,6 @@ jobs:
           RAW_TF_VAR_enable_nat_gateway: ${{ vars.TF_VAR_enable_nat_gateway }}
           RAW_TF_VAR_use_eip: ${{ vars.TF_VAR_use_eip }}
           RAW_TF_VAR_ssh_allowed_cidr: ${{ vars.TF_VAR_ssh_allowed_cidr }}
-
-          # 2c stack-ssm knobs
           RAW_TF_VAR_install_docker_if_missing: ${{ vars.TF_VAR_install_docker_if_missing }}
           RAW_TF_VAR_postgres_user: ${{ vars.TF_VAR_postgres_user }}
           RAW_TF_VAR_postgres_db: ${{ vars.TF_VAR_postgres_db }}
