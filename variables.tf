@@ -128,12 +128,12 @@ variable "postgres_user" {
   type    = string
   default = "postgres"
 }
-variable "postgres_password" {
-  description = "If empty, module generates and stores to SSM SecureString."
-  type        = string
-  default     = ""
-  sensitive   = true
-}
+# variable "postgres_password" {
+#   description = "If empty, module generates and stores to SSM SecureString."
+#   type        = string
+#   default     = ""
+#   sensitive   = true
+# }
 variable "postgres_db" {
   type    = string
   default = "appdb"
@@ -155,3 +155,9 @@ variable "hello_port" {
   type    = number
   default = 8080
 }
+variable "stack_dir" {
+  type    = string
+  default = "/opt/webstack"
+}
+
+

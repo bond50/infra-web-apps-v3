@@ -114,7 +114,9 @@ resource "aws_instance" "this" {
   # If the variable is an empty string (""), it sets the value to 'null', which AWS treats as unset.
   key_name = var.key_name != "" ? var.key_name : null
   # Conditional IAM Profile: Assigns an IAM profile for permissions if a name is provided.
-  iam_instance_profile = var.instance_profile_name != "" ? var.instance_profile_name : null
+  iam_instance_profile        = var.instance_profile_name != "" ? var.instance_profile_name : null
+  user_data                   = var.user_data != "" ? var.user_data : null
+  user_data_replace_on_change = var.user_data_replace_on_change
 
   # Root Block Device: Configuration for the server's main hard drive (EBS volume).
   root_block_device {

@@ -1,0 +1,71 @@
+name: 06 - Import existing IAM (one-off)
+
+on:
+    workflow_dispatch:
+        inputs:
+            project_name:
+                description: "Project name"
+                required: true
+                default: "web-apps"
+            environment:
+                description: "Environment"
+                required: true
+                default: "prod"
+
+permissions:
+    id-token: write
+    contents: read
+
+jobs:
+    import:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v5
+
+            - name: Setup Terraform
+              uses: hashicorp/setup-terraform@v3
+              with:
+                  terraform_version: 1.13.3
+
+            - name: Configure AWS (OIDC)
+              uses: aws-actions/configure-aws-credentials@v5
+              with:
+                  role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+                  aws-region: ${{ vars.AWS_REGION }}
+
+            - name: Terraform Init (S3 backend)
+              run: |
+                  terraform init -input=false \
+                    -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+                    -backend-config="key=${{ vars.TF_STATE_KEY }}/ci/terraform.tfstate" \
+                    -backend-config="region=${{ vars.AWS_REGION }}" \
+                    -backend-config="encrypt=true"
+
+            - name: Compute names
+              id: n
+              run: |
+                  P="${{ github.event.inputs.project_name }}"
+                  E="${{ github.event.inputs.environment }}"
+                  echo "role_name=${P}-${E}-ec2-app-role" >> "$GITHUB_OUTPUT"
+                  echo "profile_name=${P}-${E}-ec2-app-profile" >> "$GITHUB_OUTPUT"
+
+            - name: Import IAM role + instance profile + policy attaches (idempotent)
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  role="${{ steps.n.outputs.role_name }}"
+                  profile="${{ steps.n.outputs.profile_name }}"
+
+                  # Import commands are idempotent; ignore errors if already imported
+                  ti () { terraform import -input=false "$1" "$2" || true; }
+
+                  ti "module.iam_instance_profile.aws_iam_role.ec2" "$role"
+                  ti "module.iam_instance_profile.aws_iam_instance_profile.this" "$profile"
+
+                  ti "module.iam_instance_profile.aws_iam_role_policy_attachment.ssm_core"          "$role/arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+                  ti "module.iam_instance_profile.aws_iam_role_policy_attachment.ecr_readonly"      "$role/arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+                  ti "module.iam_instance_profile.aws_iam_role_policy_attachment.cloudwatch_logs"   "$role/arn:aws:iam::aws:policy/CloudWatchLogsFullAccess"
+
+            - name: Show state (for audit)
+              run: terraform state list | sed -n '/module\.iam_instance_profile/p'
