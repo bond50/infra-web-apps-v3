@@ -128,12 +128,12 @@ variable "postgres_user" {
   type    = string
   default = "postgres"
 }
-variable "postgres_password" {
-  description = "If empty, module generates and stores to SSM SecureString."
-  type        = string
-  default     = ""
-  sensitive   = true
-}
+# variable "postgres_password" {
+#   description = "If empty, module generates and stores to SSM SecureString."
+#   type        = string
+#   default     = ""
+#   sensitive   = true
+# }
 variable "postgres_db" {
   type    = string
   default = "appdb"
