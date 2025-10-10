@@ -82,26 +82,7 @@ variable "vpc_cidr" {
 variable "azs" {
   type    = list(string)
   default = ["us-east-1a", "us-east-1b"]
-} # empty => auto-pick first 2 AZs
-
-# # --- Postgres (local docker by default; password optional) ---
-# # tflint-ignore: terraform_unused_declarations
-# variable "postgres_user" {
-#   type    = string
-#   default = "postgres"
-# }
-# # tflint-ignore: terraform_unused_declarations
-# variable "postgres_password" {
-#   type      = string
-#   default   = ""
-#   sensitive = true
-# }
-# # tflint-ignore: terraform_unused_declarations
-# variable "postgres_default_db" {
-#   type    = string
-#   default = ""
-# }
-
+}
 
 variable "ssh_allowed_cidr" {
   type    = string
@@ -126,9 +107,6 @@ variable "key_name" {
   default     = ""
 }
 
-# OS family toggle for the host AMI
-
-# CPU architecture toggle for the AMI lookup
 variable "arch" {
   description = "CPU architecture for the AMI: \"amd64\" or \"arm64\""
   type        = string
@@ -137,4 +115,43 @@ variable "arch" {
     condition     = contains(["amd64", "arm64"], var.arch)
     error_message = "arch must be \"amd64\" or \"arm64\"."
   }
+}
+
+
+# Host runtime toggles for 2c
+variable "install_docker_if_missing" {
+  type    = bool
+  default = true
+}
+
+variable "postgres_user" {
+  type    = string
+  default = "postgres"
+}
+variable "postgres_password" {
+  description = "If empty, module generates and stores to SSM SecureString."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+variable "postgres_db" {
+  type    = string
+  default = "appdb"
+}
+variable "postgres_port" {
+  type    = number
+  default = 5432
+}
+
+variable "enable_hello_http" {
+  type    = bool
+  default = false
+}
+variable "hello_image" {
+  type    = string
+  default = "nginxdemos/hello:plain-text"
+}
+variable "hello_port" {
+  type    = number
+  default = 8080
 }

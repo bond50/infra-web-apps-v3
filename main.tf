@@ -66,48 +66,25 @@ module "compute_min_host" {
   }
 }
 
+module "stack_ssm" {
+  source = "./modules/stack-ssm"
 
-# module "compute_app_host" {
-#   # FIX: directory name uses underscore, not hyphen
-#   source = "./modules/compute_app_host"
+  project_name = var.project_name
+  environment  = var.environment
+  instance_id  = module.compute_min_host.id
 
-#   project_name     = var.project_name
-#   environment      = var.environment
-#   ami_id           = data.aws_ami.ubuntu.id
-#   instance_type    = var.instance_type
-#   ssh_allowed_cidr = var.ssh_allowed_cidr
-#   # Assumes your network module exports public_subnet_ids.
-#   # If your output name differs, adjust here.
-#   subnet_id = module.network.public_subnet_ids[0]
+  # Docker (official Ubuntu flow)
+  install_docker_if_missing = var.install_docker_if_missing
 
-#   # TEMP: let the compute module create its own SG for now
-#   # security_group_id     = module.security_group.id  # REMOVE this line
+  # Postgres 17 base
+  postgres_user = var.postgres_user
+  postgres_db   = var.postgres_db
+  postgres_port = var.postgres_port
+  # leave empty to auto-generate into SSM
+  postgres_password = var.postgres_password
 
-#   # TEMP: skip IAM instance profile until we add it as a module
-#   # instance_profile_name = aws_iam_instance_profile.ec2.name   # REMOVE this line
-
-#   root_volume_size      = var.root_volume_size
-#   associate_public_ip   = true
-#   use_eip               = var.use_eip
-#   instance_profile_name = aws_iam_instance_profile.ec2_ssm.name
-
-#   key_name              = "" # use SSM Session Manager
-#   stack_dir             = var.stack_dir
-#   enable_local_postgres = true # mandatory now
-# }
-
-
-# module "stack_ssm" {
-#   source       = "./modules/stack-ssm"
-#   project_name = var.project_name
-#   environment  = var.environment
-
-#   # FIX: the compute module outputs "id" (not "instance_id")
-#   instance_id = module.compute_app_host.id
-
-#   stack_dir         = var.stack_dir
-#   postgres_user     = var.postgres_user
-#   postgres_password = var.postgres_password
-#   postgres_db       = var.postgres_default_db != "" ? var.postgres_default_db : "${var.project_name}_db"
-#   postgres_port     = 5432
-# }
+  # Optional hello service
+  enable_hello_http = var.enable_hello_http
+  hello_image       = var.hello_image
+  hello_port        = var.hello_port
+}
