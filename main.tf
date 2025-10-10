@@ -69,17 +69,13 @@ module "compute_min_host" {
 module "stack_ssm" {
   source = "./modules/stack-ssm"
 
-  project_name = var.project_name
-  environment  = var.environment
-  instance_id  = module.compute_min_host.id
-
-  # Docker (official Ubuntu flow)
+  project_name              = var.project_name
+  environment               = var.environment
+  instance_id               = module.compute_min_host.id
   install_docker_if_missing = var.install_docker_if_missing
-
-  # Postgres 17 base
-  postgres_user = var.postgres_user
-  postgres_db   = var.postgres_db
-  postgres_port = var.postgres_port
+  postgres_user             = var.postgres_user
+  postgres_db               = var.postgres_db
+  postgres_port             = var.postgres_port
   # leave empty to auto-generate into SSM
   postgres_password = var.postgres_password
 
