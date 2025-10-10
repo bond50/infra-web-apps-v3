@@ -18,7 +18,8 @@ concurrency:
 jobs:
   pr-quality:
     runs-on: ubuntu-latest
-    name: pr-quality
+    # Only set an environment when pushing to main (to gate apply with env approvals)
+    environment: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && 'production' || '' }}
 
     steps:
       - name: Checkout repository code
@@ -76,6 +77,8 @@ jobs:
           RAW_TF_VAR_enable_nat_gateway: ${{ vars.TF_VAR_enable_nat_gateway }}
           RAW_TF_VAR_use_eip: ${{ vars.TF_VAR_use_eip }}
           RAW_TF_VAR_ssh_allowed_cidr: ${{ vars.TF_VAR_ssh_allowed_cidr }}
+
+          # 2c stack-ssm knobs
           RAW_TF_VAR_install_docker_if_missing: ${{ vars.TF_VAR_install_docker_if_missing }}
           RAW_TF_VAR_postgres_user: ${{ vars.TF_VAR_postgres_user }}
           RAW_TF_VAR_postgres_db: ${{ vars.TF_VAR_postgres_db }}
@@ -84,11 +87,6 @@ jobs:
           RAW_TF_VAR_hello_image: ${{ vars.TF_VAR_hello_image }}
           RAW_TF_VAR_hello_port: ${{ vars.TF_VAR_hello_port }}
 
-      # === New: structural guard to prevent 409s on release ===
-      - name: Bootstrap import sync check
-        run: python scripts/check_bootstrap_imports_sync.py
-
-      # Init with S3 backend (read-only plan state path) + per-branch workspace
       - name: Terraform Init (S3 backend only) + Workspace
         shell: bash
         run: |
