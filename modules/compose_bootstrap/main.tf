@@ -1,3 +1,7 @@
+#############################################
+# Compose bootstrap (cloud-init user_data)
+#############################################
+
 locals {
   name = "${var.project_name}-${var.environment}-compose-bootstrap"
   tags = {
@@ -10,6 +14,7 @@ locals {
   pg_param_name = "/projects/${var.project_name}/${var.environment}/stack/pg_password"
 }
 
+# Host-level Postgres password (SecureString in SSM)
 resource "random_password" "pg" {
   length  = 24
   special = false
@@ -17,15 +22,13 @@ resource "random_password" "pg" {
 }
 
 resource "aws_ssm_parameter" "pg_password" {
-  name        = "/projects/${var.project_name}/${var.environment}/stack/pg_password"
+  name        = local.pg_param_name
   type        = "SecureString"
   value       = var.postgres_password != "" ? var.postgres_password : random_password.pg.result
-  overwrite   = true # <-- add this
+  overwrite   = true
   description = "Docker Postgres password for local container"
   tags        = local.tags
 }
-
-
 
 # Compose YAML (Postgres 17 with optional hello)
 locals {
@@ -72,7 +75,7 @@ locals {
   compose_yaml = var.enable_hello_http ? local.compose_with_hello : local.compose_base
 }
 
-# Cloud-init/user_data: installs Docker per official docs, fetches PG pwd from SSM, writes compose, up -d
+# Cloud-init user_data (Ubuntu official Docker steps)
 locals {
   user_data = <<-UD
     #!/bin/bash
@@ -94,7 +97,7 @@ locals {
         curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
         chmod a+r /etc/apt/keyrings/docker.asc
 
-        # Add the repository to Apt sources
+        # Add the repository to Apt sources (Ubuntu codename)
         echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $${UBUNTU_CODENAME:-$VERSION_CODENAME} stable" \
           > /etc/apt/sources.list.d/docker.list
         apt-get update -y

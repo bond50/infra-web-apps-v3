@@ -66,10 +66,10 @@ variable "https_allowed_cidr" {
 }
 
 # Optional cloud-init / user-data to run at boot
+# Optional cloud-init for the instance
 variable "user_data" {
-  type        = string
-  default     = ""
-  description = "Cloud-init user-data to run on instance boot (empty = none)."
+  type    = string
+  default = ""
 }
 
 # Ensure instance is replaced when user_data changes (so script reruns)

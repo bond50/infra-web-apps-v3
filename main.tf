@@ -46,8 +46,8 @@ module "compute_min_host" {
   ami_id        = local.ami_id
   instance_type = var.instance_type
 
-  subnet_id = module.network.public_subnet_ids[0]
-
+  subnet_id             = module.network.public_subnet_ids[0]
+  user_data             = module.compose_bootstrap.user_data
   associate_public_ip   = true
   key_name              = var.key_name
   instance_profile_name = module.iam_instance_profile.name
@@ -59,7 +59,6 @@ module "compute_min_host" {
   # http_allowed_cidr  = "0.0.0.0/0"
   # https_allowed_cidr = "0.0.0.0/0
 
-  user_data = module.compose_bootstrap.user_data
 
   tags = {
     Project     = var.project_name
@@ -73,18 +72,14 @@ module "compose_bootstrap" {
 
   project_name = var.project_name
   environment  = var.environment
-  instance_id  = module.compute_min_host.id
 
-  # Docker (Ubuntu official flow)
   install_docker_if_missing = var.install_docker_if_missing
   stack_dir                 = var.stack_dir
-  # Postgres on the host (compose)
+
   postgres_user = var.postgres_user
   postgres_db   = var.postgres_db
   postgres_port = var.postgres_port
-  # postgres_password not passed on purpose (empty default -> auto-generate)
 
-  # Optional hello
   enable_hello_http = var.enable_hello_http
   hello_image       = var.hello_image
   hello_port        = var.hello_port
