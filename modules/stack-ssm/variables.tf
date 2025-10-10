@@ -8,7 +8,7 @@ variable "environment" {
 }
 variable "instance_id" {
   type = string
-}
+} # target EC2 instance ID (from 2b)
 
 # Where we render compose + runtime state on the box
 variable "stack_dir" {
