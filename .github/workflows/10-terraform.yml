@@ -17,8 +17,6 @@ concurrency:
 jobs:
   tf:
     runs-on: ubuntu-latest
-    # Gate applies with environment approvals when pushing to main
-    environment: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && 'production' || '' }}
 
     # Make all vars available to every step (Terraform will auto-read TF_VAR_*)
     env:
@@ -28,7 +26,7 @@ jobs:
       TF_STATE_TABLE: ${{ vars.TF_STATE_TABLE }}
       TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
 
-      # Terraform inputs (non-secret) — single source of truth
+      # Terraform inputs (non-secret)
       TF_VAR_project_name: ${{ vars.TF_VAR_project_name }}
       TF_VAR_environment: ${{ vars.TF_VAR_environment }}
       TF_VAR_region: ${{ vars.TF_VAR_region }}
@@ -93,19 +91,12 @@ jobs:
           if [ "${GITHUB_REF_NAME}" = "main" ]; then
             WS="prod"
           else
-            WS="branch-${GITHUB_REF_NAME//[^a-zA-Z0-9-_]/-}"
+            # workspace name: letters/digits/_-. only
+            WS="branch-${GITHUB_REF_NAME//[^a-zA-Z0-9._-]/-}"
           fi
           terraform workspace list || true
           terraform workspace select "$WS" || terraform workspace new "$WS"
           echo "Using workspace: $(terraform workspace show)"
-
-      - name: Debug: show state prefix
-        shell: bash
-        run: |
-          set -eu
-          WS="$(terraform workspace show)"
-          echo "S3 state path: s3://${TF_STATE_BUCKET}/${TF_STATE_KEY}/${WS}/terraform.tfstate"
-          aws s3 ls "s3://${TF_STATE_BUCKET}/${TF_STATE_KEY}/${WS}/" --recursive || true
 
       - name: Terraform fmt & validate & plan
         shell: bash
@@ -123,7 +114,7 @@ jobs:
           path: tfplan.bin
           retention-days: 7
 
-      - name: Terraform Apply (only on main; gated by environment)
+      - name: Terraform Apply (only on main)
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         shell: bash
         run: terraform apply -input=false -auto-approve tfplan.bin
