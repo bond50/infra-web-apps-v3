@@ -45,3 +45,7 @@ variable "hello_port" {
   type    = number
   default = 8080
 }
+variable "instance_id" {
+  type        = string
+  description = "EC2 instance ID targeted by the compose bootstrap association"
+}
