@@ -59,7 +59,6 @@ module "compute_min_host" {
   # http_allowed_cidr  = "0.0.0.0/0"
   # https_allowed_cidr = "0.0.0.0/0
 
-  user_data = module.compose_bootstrap.user_data
 
   tags = {
     Project     = var.project_name
@@ -73,6 +72,7 @@ module "compose_bootstrap" {
 
   project_name = var.project_name
   environment  = var.environment
+
 
   # Docker (Ubuntu)
   install_docker_if_missing = var.install_docker_if_missing
