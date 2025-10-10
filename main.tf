@@ -77,7 +77,7 @@ module "compose_bootstrap" {
 
   # Docker (Ubuntu official flow)
   install_docker_if_missing = var.install_docker_if_missing
-
+  stack_dir                 = var.stack_dir
   # Postgres on the host (compose)
   postgres_user = var.postgres_user
   postgres_db   = var.postgres_db
