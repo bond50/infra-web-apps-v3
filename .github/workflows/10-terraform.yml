@@ -17,21 +17,49 @@ concurrency:
 jobs:
   tf:
     runs-on: ubuntu-latest
-    # Only set an environment when pushing to main (to gate apply with env approvals)
+    # Gate applies with environment approvals when pushing to main
     environment: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && 'production' || '' }}
+
+    # Make all vars available to every step (Terraform will auto-read TF_VAR_*)
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_STATE_TABLE: ${{ vars.TF_STATE_TABLE }}
+      TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
+
+      # Terraform inputs (non-secret) — single source of truth
+      TF_VAR_project_name: ${{ vars.TF_VAR_project_name }}
+      TF_VAR_environment: ${{ vars.TF_VAR_environment }}
+      TF_VAR_region: ${{ vars.TF_VAR_region }}
+      TF_VAR_vpc_cidr: ${{ vars.TF_VAR_vpc_cidr }}
+      TF_VAR_public_subnet_cidrs: ${{ vars.TF_VAR_public_subnet_cidrs }}
+      TF_VAR_private_app_subnet_cidrs: ${{ vars.TF_VAR_private_app_subnet_cidrs }}
+      TF_VAR_private_db_subnet_cidrs: ${{ vars.TF_VAR_private_db_subnet_cidrs }}
+      TF_VAR_enable_nat_gateway: ${{ vars.TF_VAR_enable_nat_gateway }}
+      TF_VAR_ssh_allowed_cidr: ${{ vars.TF_VAR_ssh_allowed_cidr }}
+
+      # 2c host toggles
+      TF_VAR_install_docker_if_missing: ${{ vars.TF_VAR_install_docker_if_missing }}
+      TF_VAR_stack_dir: ${{ vars.TF_VAR_stack_dir }}
+      TF_VAR_postgres_user: ${{ vars.TF_VAR_postgres_user }}
+      TF_VAR_postgres_db: ${{ vars.TF_VAR_postgres_db }}
+      TF_VAR_postgres_port: ${{ vars.TF_VAR_postgres_port }}
+      TF_VAR_enable_hello_http: ${{ vars.TF_VAR_enable_hello_http }}
+      TF_VAR_hello_image: ${{ vars.TF_VAR_hello_image }}
+      TF_VAR_hello_port: ${{ vars.TF_VAR_hello_port }}
 
     steps:
       - name: Checkout repository code
         uses: actions/checkout@v5
 
-      - name: Preflight — verify Variables (OIDC mode)
+      - name: Preflight — verify required Variables
         shell: bash
         run: |
           set -eu
-          [ -n "${{ vars.AWS_REGION }}" ]      || { echo "Missing variable: AWS_REGION"; exit 1; }
-          [ -n "${{ vars.AWS_ROLE_ARN }}" ]    || { echo "Missing variable: AWS_ROLE_ARN"; exit 1; }
-          [ -n "${{ vars.TF_STATE_BUCKET }}" ] || { echo "Missing variable: TF_STATE_BUCKET"; exit 1; }
-          [ -n "${{ vars.TF_STATE_KEY }}" ]    || { echo "Missing variable: TF_STATE_KEY"; exit 1; }
+          for v in AWS_REGION AWS_ROLE_ARN TF_STATE_BUCKET TF_STATE_TABLE TF_STATE_KEY; do
+            test -n "${!v:-}" || { echo "Missing required repo Variable: $v"; exit 1; }
+          done
           echo "Preflight OK."
 
       - name: Setup Terraform
@@ -42,64 +70,50 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v5
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
           role-session-name: gha-tf-${{ github.run_id }}
 
-      - name: Setup Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Export TF_VARs (normalized)
-        run: python scripts/export_tfvars_ci.py
-        env:
-          AWS_REGION: ${{ vars.AWS_REGION }}
-
-          RAW_TF_VAR_project_name: ${{ vars.TF_VAR_project_name }}
-          RAW_TF_VAR_environment: ${{ vars.TF_VAR_environment }}
-          RAW_TF_VAR_vpc_cidr: ${{ vars.TF_VAR_vpc_cidr }}
-
-          RAW_TF_VAR_azs: ${{ vars.TF_VAR_azs }}
-          RAW_TF_VAR_public_subnet_cidrs: ${{ vars.TF_VAR_public_subnet_cidrs }}
-          RAW_TF_VAR_private_app_subnet_cidrs: ${{ vars.TF_VAR_private_app_subnet_cidrs }}
-          RAW_TF_VAR_private_db_subnet_cidrs: ${{ vars.TF_VAR_private_db_subnet_cidrs }}
-
-          RAW_TF_VAR_enable_nat_gateway: ${{ vars.TF_VAR_enable_nat_gateway }}
-          RAW_TF_VAR_use_eip: ${{ vars.TF_VAR_use_eip }}
-          RAW_TF_VAR_ssh_allowed_cidr: ${{ vars.TF_VAR_ssh_allowed_cidr }}
-
-          # 2c stack-ssm knobs
-          RAW_TF_VAR_install_docker_if_missing: ${{ vars.TF_VAR_install_docker_if_missing }}
-          RAW_TF_VAR_postgres_user: ${{ vars.TF_VAR_postgres_user }}
-          RAW_TF_VAR_postgres_db: ${{ vars.TF_VAR_postgres_db }}
-          RAW_TF_VAR_postgres_port: ${{ vars.TF_VAR_postgres_port }}
-          RAW_TF_VAR_enable_hello_http: ${{ vars.TF_VAR_enable_hello_http }}
-          RAW_TF_VAR_hello_image: ${{ vars.TF_VAR_hello_image }}
-          RAW_TF_VAR_hello_port: ${{ vars.TF_VAR_hello_port }}
-
-      - name: Terraform Init (S3 backend only) + Workspace
+      - name: Terraform init (S3 backend; workspace_key_prefix pattern)
         shell: bash
         run: |
-          set -euo pipefail
-          RAW="${GITHUB_REF_NAME:-main}"
-          WS="branch-${RAW//[^a-zA-Z0-9-_]/-}"
-          echo "Using workspace: $WS"
+          set -eu
+          terraform init -input=false -reconfigure \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="dynamodb_table=${TF_STATE_TABLE}" \
+            -backend-config="encrypt=true" \
+            -backend-config="key=terraform.tfstate" \
+            -backend-config="workspace_key_prefix=${TF_STATE_KEY}"
 
-          terraform init -input=false \
-            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
-            -backend-config="key=${{ vars.TF_STATE_KEY }}/ci/terraform.tfstate" \
-            -backend-config="region=${{ vars.AWS_REGION }}" \
-            -backend-config="encrypt=true"
-
+      - name: Select workspace (prod on main; branch-* otherwise)
+        shell: bash
+        run: |
+          set -eu
+          if [ "${GITHUB_REF_NAME}" = "main" ]; then
+            WS="prod"
+          else
+            WS="branch-${GITHUB_REF_NAME//[^a-zA-Z0-9-_]/-}"
+          fi
           terraform workspace list || true
           terraform workspace select "$WS" || terraform workspace new "$WS"
+          echo "Using workspace: $(terraform workspace show)"
+
+      - name: Debug: show state prefix
+        shell: bash
+        run: |
+          set -eu
+          WS="$(terraform workspace show)"
+          echo "S3 state path: s3://${TF_STATE_BUCKET}/${TF_STATE_KEY}/${WS}/terraform.tfstate"
+          aws s3 ls "s3://${TF_STATE_BUCKET}/${TF_STATE_KEY}/${WS}/" --recursive || true
 
       - name: Terraform fmt & validate & plan
+        shell: bash
         run: |
+          set -eu
           terraform fmt -check
           terraform validate
-          terraform plan -input=false -no-color -lock=false -out=tfplan.bin
+          terraform plan -input=false -no-color -out=tfplan.bin
 
       - name: Upload plan artifact (for non-main branches)
         if: github.ref != 'refs/heads/main'
@@ -111,8 +125,10 @@ jobs:
 
       - name: Terraform Apply (only on main; gated by environment)
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        run: terraform apply -input=false -auto-approve -lock=false tfplan.bin
+        shell: bash
+        run: terraform apply -input=false -auto-approve tfplan.bin
 
-      - name: Post-apply smoke test (EC2 via SSM)
+      - name: Post-apply smoke (placeholder)
         if: github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.ENABLE_COMPUTE_TEST == 'true'
-        run: echo "Compute test is gated off until EC2/SSM module is enabled."
+        shell: bash
+        run: echo "Add EC2/SSM tests when compute module is live."
